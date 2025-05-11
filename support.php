@@ -1,22 +1,36 @@
 <?php
 require_once 'includes/config.php';
 require_once 'includes/header.php';
+require_once 'includes/csrf.php';
 
-session_start();
 $success = '';
+$error = '';
+$csrf_token = generateCsrfToken();
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $full_name = trim($_POST['full_name']);
-    $email = trim($_POST['email']);
-    $content = trim($_POST['content']);
-    $user_id = isset($_SESSION['user_id']) ? $_SESSION['user_id'] : NULL;
+    $token = isset($_POST['csrf_token']) ? $_POST['csrf_token'] : '';
 
-    if (empty($full_name) || empty($email) || empty($content)) {
-        $error = 'Vui lòng điền đầy đủ thông tin.';
+    if (!verifyCsrfToken($token)) {
+        $error = 'Yêu cầu không hợp lệ. Vui lòng thử lại.';
     } else {
-        $stmt = $pdo->prepare("INSERT INTO support_requests (user_id, full_name, email, content) VALUES (?, ?, ?, ?)");
-        $stmt->execute([$user_id, $full_name, $email, $content]);
-        $success = 'Yêu cầu hỗ trợ đã được gửi thành công!';
+        $full_name = trim($_POST['full_name']);
+        $email = trim($_POST['email']);
+        $content = trim($_POST['content']);
+        $user_id = isset($_SESSION['user_id']) ? $_SESSION['user_id'] : NULL;
+
+        if (empty($full_name) || empty($email) || empty($content)) {
+            $error = 'Vui lòng điền đầy đủ thông tin.';
+        } elseif (strlen($full_name) > 255) {
+            $error = 'Họ tên không được vượt quá 255 ký tự.';
+        } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            $error = 'Email không hợp lệ.';
+        } elseif (strlen($content) > 1000) {
+            $error = 'Nội dung yêu cầu không được vượt quá 1000 ký tự.';
+        } else {
+            $stmt = $pdo->prepare("INSERT INTO support_requests (user_id, full_name, email, content) VALUES (?, ?, ?, ?)");
+            $stmt->execute([$user_id, $full_name, $email, $content]);
+            $success = 'Yêu cầu hỗ trợ đã được gửi thành công!';
+        }
     }
 }
 
@@ -40,12 +54,12 @@ $faqs = [
                 <div class="accordion-item">
                     <h2 class="accordion-header" id="heading<?php echo $index; ?>">
                         <button class="accordion-button <?php echo $index === 0 ? '' : 'collapsed'; ?>" type="button" data-bs-toggle="collapse" data-bs-target="#collapse<?php echo $index; ?>" aria-expanded="<?php echo $index === 0 ? 'true' : 'false'; ?>" aria-controls="collapse<?php echo $index; ?>">
-                            <?php echo $faq['question']; ?>
+                            <?php echo htmlspecialchars($faq['question']); ?>
                         </button>
                     </h2>
                     <div id="collapse<?php echo $index; ?>" class="accordion-collapse collapse <?php echo $index === 0 ? 'show' : ''; ?>" aria-labelledby="heading<?php echo $index; ?>" data-bs-parent="#faqAccordion">
                         <div class="accordion-body">
-                            <?php echo $faq['answer']; ?>
+                            <?php echo htmlspecialchars($faq['answer']); ?>
                         </div>
                     </div>
                 </div>
@@ -54,7 +68,7 @@ $faqs = [
 
         <!-- Form gửi yêu cầu hỗ trợ -->
         <h4 class="mb-3">Gửi Yêu Cầu Hỗ Trợ</h4>
-        <?php if (isset($error)): ?>
+        <?php if ($error): ?>
             <div class="alert alert-danger"><?php echo $error; ?></div>
         <?php endif; ?>
         <?php if ($success): ?>
@@ -64,16 +78,17 @@ $faqs = [
             <div class="col-md-6">
                 <div class="mb-3">
                     <label for="full_name" class="form-label">Họ tên</label>
-                    <input type="text" name="full_name" id="full_name" class="form-control" value="<?php echo isset($_SESSION['user_id']) ? ($pdo->query("SELECT full_name FROM users WHERE id = " . $_SESSION['user_id'])->fetchColumn()) : ''; ?>" required>
+                    <input type="text" name="full_name" id="full_name" class="form-control" value="<?php echo isset($_SESSION['user_id']) ? htmlspecialchars($pdo->query("SELECT full_name FROM users WHERE id = " . $_SESSION['user_id'])->fetchColumn()) : ''; ?>" required>
                 </div>
                 <div class="mb-3">
                     <label for="email" class="form-label">Email</label>
-                    <input type="email" name="email" id="email" class="form-control" value="<?php echo isset($_SESSION['user_id']) ? ($pdo->query("SELECT email FROM users WHERE id = " . $_SESSION['user_id'])->fetchColumn()) : ''; ?>" required>
+                    <input type="email" name="email" id="email" class="form-control" value="<?php echo isset($_SESSION['user_id']) ? htmlspecialchars($pdo->query("SELECT email FROM users WHERE id = " . $_SESSION['user_id'])->fetchColumn()) : ''; ?>" required>
                 </div>
                 <div class="mb-3">
                     <label for="content" class="form-label">Nội dung yêu cầu</label>
-                    <textarea name="content" id="content" class="form-control" rows="5" required></textarea>
+                    <textarea name="content" id="content" class="form-control" rows="5" maxlength="1000" required></textarea>
                 </div>
+                <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($csrf_token); ?>">
                 <button type="submit" class="btn btn-primary w-100">Gửi yêu cầu</button>
             </div>
         </form>

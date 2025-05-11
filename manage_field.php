@@ -1,8 +1,8 @@
 <?php
 require_once 'includes/config.php';
 require_once 'includes/header.php';
+require_once 'includes/csrf.php';
 
-session_start();
 if (!isset($_SESSION['user_id']) || $_SESSION['account_type'] !== 'owner') {
     header('Location: login.php');
     exit;
@@ -20,328 +20,473 @@ if ($user['status'] !== 'approved') {
 
 $error = '';
 $success = '';
+$csrf_token = generateCsrfToken();
 
 // Lấy danh sách sân của chủ sân
 $stmt = $pdo->prepare("SELECT * FROM fields WHERE owner_id = ?");
 $stmt->execute([$user_id]);
 $fields = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-// Lấy danh sách yêu cầu đặt sân
-$stmt = $pdo->prepare("SELECT b.*, f.name AS field_name, u.full_name AS customer_name 
-                       FROM bookings b 
-                       JOIN fields f ON b.field_id = f.id 
-                       JOIN users u ON b.user_id = u.id 
-                       WHERE f.owner_id = ? AND b.status = 'pending'");
-$stmt->execute([$user_id]);
-$bookings = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-// Lấy lịch đặt sân đã xác nhận
-$stmt = $pdo->prepare("SELECT b.*, f.name AS field_name, u.full_name AS customer_name 
-                       FROM bookings b 
-                       JOIN fields f ON b.field_id = f.id 
-                       JOIN users u ON b.user_id = u.id 
-                       WHERE f.owner_id = ? AND b.status = 'confirmed'");
-$stmt->execute([$user_id]);
-$confirmed_bookings = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-// Tính doanh thu
-$total_revenue = 0;
-$revenue_by_field = [];
-$stmt = $pdo->prepare("SELECT f.id, f.name, SUM(b.total_price) as revenue 
-                       FROM bookings b 
-                       JOIN fields f ON b.field_id = f.id 
-                       WHERE f.owner_id = ? AND b.status = 'confirmed' 
-                       GROUP BY f.id, f.name");
-$stmt->execute([$user_id]);
-$revenues = $stmt->fetchAll(PDO::FETCH_ASSOC);
-foreach ($revenues as $rev) {
-    $total_revenue += $rev['revenue'];
-    $revenue_by_field[$rev['id']] = ['name' => $rev['name'], 'revenue' => $rev['revenue']];
-}
-
 // Xử lý thêm sân
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_field'])) {
-    $name = trim($_POST['name']);
-    $address = trim($_POST['address']);
-    $price_per_hour = (float)$_POST['price_per_hour'];
-    $open_time = $_POST['open_time'];
-    $close_time = $_POST['close_time'];
+    $token = isset($_POST['csrf_token']) ? $_POST['csrf_token'] : '';
 
-    if (empty($name) || empty($address) || $price_per_hour <= 0 || empty($open_time) || empty($close_time)) {
-        $error = 'Vui lòng điền đầy đủ thông tin sân.';
+    if (!verifyCsrfToken($token)) {
+        $error = 'Yêu cầu không hợp lệ. Vui lòng thử lại.';
     } else {
-        $stmt = $pdo->prepare("INSERT INTO fields (owner_id, name, address, price_per_hour, open_time, close_time, status) 
-                               VALUES (?, ?, ?, ?, ?, ?, 'pending')");
-        $stmt->execute([$user_id, $name, $address, $price_per_hour, $open_time, $close_time]);
-        $success = 'Thêm sân thành công! Đang chờ admin phê duyệt.';
-        header('Location: manage_field.php');
-        exit;
+        $name = trim($_POST['name']);
+        $address = trim($_POST['address']);
+        $price_per_hour = (float)$_POST['price_per_hour'];
+        $open_time = $_POST['open_time'];
+        $close_time = $_POST['close_time'];
+        $field_image = '';
+
+        // Kiểm tra dữ liệu
+        if (empty($name) || empty($address) || $price_per_hour <= 0 || empty($open_time) || empty($close_time)) {
+            $error = 'Vui lòng điền đầy đủ thông tin sân.';
+        } elseif (strlen($name) > 255) {
+            $error = 'Tên sân không được vượt quá 255 ký tự.';
+        } elseif (strlen($address) > 255) {
+            $error = 'Địa chỉ sân không được vượt quá 255 ký tự.';
+        } elseif (!preg_match('/^\d{2}:\d{2}$/', $open_time) || !preg_match('/^\d{2}:\d{2}$/', $close_time)) {
+            $error = 'Giờ mở/đóng cửa không hợp lệ.';
+        } elseif (strtotime($close_time) <= strtotime($open_time)) {
+            $error = 'Giờ đóng cửa phải sau giờ mở cửa.';
+        } else {
+            // Xử lý tải ảnh sân
+            if (isset($_FILES['field_image']) && $_FILES['field_image']['error'] === UPLOAD_ERR_OK) {
+                $allowed_types = ['image/jpeg', 'image/png', 'image/gif'];
+                $max_size = 5 * 1024 * 1024; // 5MB
+
+                if (!in_array($_FILES['field_image']['type'], $allowed_types)) {
+                    $error = 'Chỉ hỗ trợ định dạng ảnh JPEG, PNG, GIF.';
+                } elseif ($_FILES['field_image']['size'] > $max_size) {
+                    $error = 'Kích thước ảnh không được vượt quá 5MB.';
+                } else {
+                    $image_name = 'field_' . $user_id . '_' . time() . '.' . pathinfo($_FILES['field_image']['name'], PATHINFO_EXTENSION);
+                    $upload_path = 'assets/img/' . $image_name;
+
+                    if (move_uploaded_file($_FILES['field_image']['tmp_name'], $upload_path)) {
+                        $field_image = $image_name;
+                    } else {
+                        $error = 'Không thể tải ảnh lên. Vui lòng thử lại.';
+                    }
+                }
+            }
+
+            if (!$error) {
+                $stmt = $pdo->prepare("INSERT INTO fields (owner_id, name, address, price_per_hour, open_time, close_time, image, status) 
+                                       VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')");
+                $stmt->execute([$user_id, $name, $address, $price_per_hour, $open_time, $close_time, $field_image]);
+                $success = 'Thêm sân thành công! Đang chờ admin phê duyệt.';
+                header('Location: manage_field.php');
+                exit;
+            }
+        }
     }
 }
 
 // Xử lý chỉnh sửa sân
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_field'])) {
-    $field_id = (int)$_POST['field_id'];
-    $name = trim($_POST['name']);
-    $address = trim($_POST['address']);
-    $price_per_hour = (float)$_POST['price_per_hour'];
-    $open_time = $_POST['open_time'];
-    $close_time = $_POST['close_time'];
+    $token = isset($_POST['csrf_token']) ? $_POST['csrf_token'] : '';
 
-    if (empty($name) || empty($address) || $price_per_hour <= 0 || empty($open_time) || empty($close_time)) {
-        $error = 'Vui lòng điền đầy đủ thông tin sân.';
+    if (!verifyCsrfToken($token)) {
+        $error = 'Yêu cầu không hợp lệ. Vui lòng thử lại.';
     } else {
-        $stmt = $pdo->prepare("UPDATE fields SET name = ?, address = ?, price_per_hour = ?, open_time = ?, close_time = ? WHERE id = ? AND owner_id = ?");
-        $stmt->execute([$name, $address, $price_per_hour, $open_time, $close_time, $field_id, $user_id]);
-        $success = 'Cập nhật sân thành công!';
-        header('Location: manage_field.php');
-        exit;
+        $field_id = (int)$_POST['field_id'];
+        $name = trim($_POST['name']);
+        $address = trim($_POST['address']);
+        $price_per_hour = (float)$_POST['price_per_hour'];
+        $open_time = $_POST['open_time'];
+        $close_time = $_POST['close_time'];
+
+        // Lấy thông tin sân hiện tại
+        $stmt = $pdo->prepare("SELECT image FROM fields WHERE id = ? AND owner_id = ?");
+        $stmt->execute([$field_id, $user_id]);
+        $current_field = $stmt->fetch(PDO::FETCH_ASSOC);
+        $field_image = $current_field['image'];
+
+        // Kiểm tra dữ liệu
+        if (empty($name) || empty($address) || $price_per_hour <= 0 || empty($open_time) || empty($close_time)) {
+            $error = 'Vui lòng điền đầy đủ thông tin sân.';
+        } elseif (strlen($name) > 255) {
+            $error = 'Tên sân không được vượt quá 255 ký tự.';
+        } elseif (strlen($address) > 255) {
+            $error = 'Địa chỉ sân không được vượt quá 255 ký tự.';
+        } elseif (!preg_match('/^\d{2}:\d{2}$/', $open_time) || !preg_match('/^\d{2}:\d{2}$/', $close_time)) {
+            $error = 'Giờ mở/đóng cửa không hợp lệ.';
+        } elseif (strtotime($close_time) <= strtotime($open_time)) {
+            $error = 'Giờ đóng cửa phải sau giờ mở cửa.';
+        } else {
+            // Xử lý tải ảnh mới (nếu có)
+            if (isset($_FILES['field_image']) && $_FILES['field_image']['error'] === UPLOAD_ERR_OK) {
+                $allowed_types = ['image/jpeg', 'image/png', 'image/gif'];
+                $max_size = 5 * 1024 * 1024; // 5MB
+
+                if (!in_array($_FILES['field_image']['type'], $allowed_types)) {
+                    $error = 'Chỉ hỗ trợ định dạng ảnh JPEG, PNG, GIF.';
+                } elseif ($_FILES['field_image']['size'] > $max_size) {
+                    $error = 'Kích thước ảnh không được vượt quá 5MB.';
+                } else {
+                    $image_name = 'field_' . $user_id . '_' . time() . '.' . pathinfo($_FILES['field_image']['name'], PATHINFO_EXTENSION);
+                    $upload_path = 'assets/img/' . $image_name;
+
+                    if (move_uploaded_file($_FILES['field_image']['tmp_name'], $upload_path)) {
+                        // Xóa ảnh cũ nếu có
+                        if ($field_image && file_exists('assets/img/' . $field_image)) {
+                            unlink('assets/img/' . $field_image);
+                        }
+                        $field_image = $image_name;
+                    } else {
+                        $error = 'Không thể tải ảnh lên. Vui lòng thử lại.';
+                    }
+                }
+            }
+
+            if (!$error) {
+                $stmt = $pdo->prepare("UPDATE fields SET name = ?, address = ?, price_per_hour = ?, open_time = ?, close_time = ?, image = ? WHERE id = ? AND owner_id = ?");
+                $stmt->execute([$name, $address, $price_per_hour, $open_time, $close_time, $field_image, $field_id, $user_id]);
+                $success = 'Cập nhật sân thành công!';
+                header('Location: manage_field.php');
+                exit;
+            }
+        }
     }
 }
 
 // Xử lý xóa sân
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_field'])) {
-    $field_id = (int)$_POST['field_id'];
-    $stmt = $pdo->prepare("DELETE FROM fields WHERE id = ? AND owner_id = ?");
-    $stmt->execute([$field_id, $user_id]);
-    $success = 'Xóa sân thành công!';
-    header('Location: manage_field.php');
-    exit;
-}
+    $token = isset($_POST['csrf_token']) ? $_POST['csrf_token'] : '';
 
-// Xử lý xác nhận/hủy đặt sân
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirm_booking'])) {
-    $booking_id = (int)$_POST['booking_id'];
-    $stmt = $pdo->prepare("UPDATE bookings SET status = 'confirmed' WHERE id = ?");
-    $stmt->execute([$booking_id]);
-    $success = 'Xác nhận đặt sân thành công!';
-    header('Location: manage_field.php');
-    exit;
-}
+    if (!verifyCsrfToken($token)) {
+        $error = 'Yêu cầu không hợp lệ. Vui lòng thử lại.';
+    } else {
+        $field_id = (int)$_POST['field_id'];
+        
+        // Lấy thông tin sân để xóa ảnh
+        $stmt = $pdo->prepare("SELECT image FROM fields WHERE id = ? AND owner_id = ?");
+        $stmt->execute([$field_id, $user_id]);
+        $field = $stmt->fetch(PDO::FETCH_ASSOC);
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['cancel_booking'])) {
-    $booking_id = (int)$_POST['booking_id'];
-    $stmt = $pdo->prepare("UPDATE bookings SET status = 'cancelled' WHERE id = ?");
-    $stmt->execute([$booking_id]);
-    $success = 'Hủy đặt sân thành công!';
-    header('Location: manage_field.php');
-    exit;
+        // Xóa ảnh nếu có
+        if ($field['image'] && file_exists('assets/img/' . $field['image'])) {
+            unlink('assets/img/' . $field['image']);
+        }
+
+        $stmt = $pdo->prepare("DELETE FROM fields WHERE id = ? AND owner_id = ?");
+        $stmt->execute([$field_id, $user_id]);
+        $success = 'Xóa sân thành công!';
+        header('Location: manage_field.php');
+        exit;
+    }
 }
 ?>
 
-<section class="manage-field py-5">
-    <div class="container">
-        <h2 class="text-center mb-4">Quản Lý Sân Bóng</h2>
+<style>
+    /* Tiêu đề trang */
+    .section-title {
+        font-weight: 600;
+        color: #1e3c72;
+        font-size: 1.2rem; /* Giảm kích thước tiêu đề */
+        margin-bottom: 1rem; /* Giảm khoảng cách dưới */
+    }
+    /* Sub-title */
+    .sub-title {
+        font-weight: 600;
+        color: #1e3c72;
+        font-size: 1rem; /* Giảm kích thước tiêu đề phụ */
+        margin-bottom: 0.5rem;
+    }
+    /* Form */
+    .manage-form {
+        background-color: #fff;
+        padding: 10px; /* Giảm padding */
+        border-radius: 5px; /* Giảm độ bo góc */
+    }
+    .manage-form .form-control,
+    .manage-form .form-select {
+        border-radius: 5px;
+        border: 1px solid #e0e4e9;
+        font-size: 0.9rem;
+    }
+    .manage-form .form-control:focus,
+    .manage-form .form-select:focus {
+        border-color: #2a5298;
+    }
+    .manage-form .input-group-text {
+        border-radius: 5px 0 0 5px;
+    }
+    .manage-form .btn-primary {
+        padding: 6px 15px; /* Giảm kích thước nút */
+        font-size: 0.9rem;
+    }
+    /* Bảng */
+    .manage-table thead th {
+        font-size: 0.9rem; /* Giảm kích thước tiêu đề cột */
+        padding: 10px; /* Giảm padding */
+    }
+    .manage-table tbody tr:hover {
+        background-color: #f8f9fa;
+    }
+    .manage-table td {
+        padding: 10px; /* Giảm padding */
+    }
+    .manage-table .price {
+        color: #e74c3c;
+        font-weight: 600;
+    }
+    .manage-table .btn {
+        padding: 6px 12px; /* Giảm kích thước nút */
+        font-size: 0.85rem;
+    }
+    /* Modal */
+    .modal-body {
+        padding: 15px; /* Giảm padding */
+    }
+    .modal-title {
+        font-size: 1.5rem; /* Giảm kích thước tiêu đề modal */
+        margin-bottom: 0.5rem;
+    }
+    .modal .form-label {
+        font-weight: 500;
+        color: #444;
+        font-size: 0.9rem;
+    }
+    .modal .form-control {
+        border-radius: 5px;
+        border: 1px solid #e0e4e9;
+        font-size: 0.9rem;
+    }
+    .modal .form-control:focus {
+        border-color: #2a5298;
+    }
+    .modal .input-group-text {
+        border-radius: 5px 0 0 5px;
+    }
+    /* Responsive */
+    @media (max-width: 768px) {
+        .section-title {
+            font-size: 1rem;
+        }
+        .sub-title {
+            font-size: 0.9rem;
+        }
+        .manage-form {
+            padding: 8px;
+        }
+        .manage-form .form-control,
+        .manage-form .form-select,
+        .manage-form .btn-primary {
+            font-size: 0.85rem;
+        }
+        .table-responsive {
+            overflow-x: auto;
+        }
+        .manage-table thead th,
+        .manage-table td {
+            padding: 8px;
+            font-size: 0.8rem;
+        }
+        .manage-table .btn {
+            padding: 5px 10px;
+            font-size: 0.8rem;
+        }
+        .modal-body {
+            padding: 10px;
+        }
+        .modal-title {
+            font-size: 1.2rem;
+        }
+    }
+</style>
 
+<section class="manage-field py-3">
+    <div class="container">
+        <h2 class="section-title text-center">Quản Lý Sân</h2>
         <?php if ($error): ?>
-            <div class="alert alert-danger"><?php echo $error; ?></div>
+            <div class="alert alert-danger alert-dismissible fade show" role="alert">
+                <i class="bi bi-exclamation-triangle-fill me-2"></i> <?php echo $error; ?>
+                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+            </div>
         <?php endif; ?>
         <?php if ($success): ?>
-            <div class="alert alert-success"><?php echo $success; ?></div>
+            <div class="alert alert-success alert-dismissible fade show" role="alert">
+                <i class="bi bi-check-circle-fill me-2"></i> <?php echo $success; ?>
+                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+            </div>
         <?php endif; ?>
-
-        <!-- Thêm sân -->
-        <h4 class="mb-3">Thêm Sân Mới</h4>
-        <form method="POST" class="row g-3 mb-5">
-            <div class="col-md-3">
-                <input type="text" name="name" class="form-control" placeholder="Tên sân" required>
+        
+        <!-- Form thêm sân mới -->
+        <h5 class="sub-title">Thêm Sân Mới</h5>
+        <form method="POST" class="row g-3 mb-3 manage-form" enctype="multipart/form-data">
+            <div class="col-md-3 col-sm-6">
+                <div class="input-group">
+                    <span class="input-group-text"><i class="bi bi-building"></i></span>
+                    <input type="text" name="name" class="form-control" placeholder="Tên sân" required>
+                </div>
             </div>
-            <div class="col-md-3">
-                <input type="text" name="address" class="form-control" placeholder="Địa chỉ" required>
+            <div class="col-md-3 col-sm-6">
+                <div class="input-group">
+                    <span class="input-group-text"><i class="bi bi-geo-alt-fill"></i></span>
+                    <input type="text" name="address" class="form-control" placeholder="Địa chỉ" required>
+                </div>
             </div>
-            <div class="col-md-2">
-                <input type="number" name="price_per_hour" class="form-control" placeholder="Giá/giờ (VND)" required>
+            <div class="col-md-2 col-sm-6">
+                <div class="input-group">
+                    <span class="input-group-text"><i class="bi bi-currency-dollar"></i></span>
+                    <input type="number" name="price_per_hour" class="form-control" placeholder="Giá/giờ (VND)" required>
+                </div>
             </div>
-            <div class="col-md-2">
-                <input type="time" name="open_time" class="form-control" required>
+            <div class="col-md-2 col-sm-6">
+                <div class="input-group">
+                    <span class="input-group-text"><i class="bi bi-clock"></i></span>
+                    <input type="time" name="open_time" class="form-control" required>
+                </div>
             </div>
-            <div class="col-md-2">
-                <input type="time" name="close_time" class="form-control" required>
+            <div class="col-md-2 col-sm-6">
+                <div class="input-group">
+                    <span class="input-group-text"><i class="bi bi-clock"></i></span>
+                    <input type="time" name="close_time" class="form-control" required>
+                </div>
             </div>
-            <div class="col-md-2">
-                <button type="submit" name="add_field" class="btn btn-primary w-100">Thêm sân</button>
+            <div class="col-md-2 col-sm-6">
+                <input type="file" name="field_image" class="form-control">
+            </div>
+            <div class="col-md-2 col-sm-6 d-flex align-items-end">
+                <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($csrf_token); ?>">
+                <button type="submit" name="add_field" class="btn btn-primary w-100 d-flex align-items-center justify-content-center gap-2">
+                    <i class="bi bi-plus-circle-fill"></i> Thêm sân
+                </button>
             </div>
         </form>
 
         <!-- Danh sách sân -->
-        <h4 class="mb-3">Danh Sách Sân</h4>
+        <h5 class="sub-title">Danh Sách Sân</h5>
         <?php if (empty($fields)): ?>
-            <p>Chưa có sân bóng nào.</p>
+            <p class="text-muted mb-3">Chưa có sân bóng nào.</p>
         <?php else: ?>
-            <div class="row">
-                <div class="col-md-12">
-                    <table class="table table-bordered">
-                        <thead>
+            <div class="table-responsive mb-3">
+                <table class="table manage-table">
+                    <thead>
+                        <tr>
+                            <th>Tên sân</th>
+                            <th>Địa chỉ</th>
+                            <th>Giá/giờ</th>
+                            <th>Giờ mở cửa</th>
+                            <th>Giờ đóng cửa</th>
+                            <th>Ảnh</th>
+                            <th>Trạng thái</th>
+                            <th>Hành động</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($fields as $field): ?>
                             <tr>
-                                <th>Tên sân</th>
-                                <th>Địa chỉ</th>
-                                <th>Giá/giờ</th>
-                                <th>Giờ mở cửa</th>
-                                <th>Giờ đóng cửa</th>
-                                <th>Trạng thái</th>
-                                <th>Hành động</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <?php foreach ($fields as $field): ?>
-                                <tr>
-                                    <td><?php echo $field['name']; ?></td>
-                                    <td><?php echo $field['address']; ?></td>
-                                    <td><?php echo number_format($field['price_per_hour'], 0, ',', '.') . ' VND'; ?></td>
-                                    <td><?php echo $field['open_time']; ?></td>
-                                    <td><?php echo $field['close_time']; ?></td>
-                                    <td><?php echo $field['status']; ?></td>
-                                    <td>
-                                        <button class="btn btn-outline-primary btn-sm" data-bs-toggle="modal" data-bs-target="#editModal<?php echo $field['id']; ?>">Sửa</button>
+                                <td><?php echo htmlspecialchars($field['name']); ?></td>
+                                <td><?php echo htmlspecialchars($field['address']); ?></td>
+                                <td class="price"><?php echo number_format($field['price_per_hour'], 0, ',', '.') . ' VND'; ?></td>
+                                <td><?php echo htmlspecialchars($field['open_time']); ?></td>
+                                <td><?php echo htmlspecialchars($field['close_time']); ?></td>
+                                <td>
+                                    <?php if ($field['image']): ?>
+                                        <img src="assets/img/<?php echo htmlspecialchars($field['image']); ?>" alt="<?php echo htmlspecialchars($field['name']); ?>" style="max-width: 50px; border-radius: 5px;">
+                                    <?php else: ?>
+                                        <span class="text-muted">Không có ảnh</span>
+                                    <?php endif; ?>
+                                </td>
+                                <td>
+                                    <span class="badge <?php echo $field['status'] === 'approved' ? 'bg-success' : ($field['status'] === 'pending' ? 'bg-warning' : 'bg-danger'); ?>">
+                                        <?php echo htmlspecialchars($field['status']); ?>
+                                    </span>
+                                </td>
+                                <td>
+                                    <div class="d-flex gap-2">
+                                        <button class="btn btn-outline-primary btn-sm d-flex align-items-center gap-1" data-bs-toggle="modal" data-bs-target="#editModal<?php echo $field['id']; ?>">
+                                            <i class="bi bi-pencil"></i> Sửa
+                                        </button>
                                         <form method="POST" style="display:inline;" onsubmit="return confirm('Bạn có chắc muốn xóa sân này?');">
                                             <input type="hidden" name="field_id" value="<?php echo $field['id']; ?>">
-                                            <button type="submit" name="delete_field" class="btn btn-danger btn-sm">Xóa</button>
+                                            <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($csrf_token); ?>">
+                                            <button type="submit" name="delete_field" class="btn btn-danger btn-sm d-flex align-items-center gap-1">
+                                                <i class="bi bi-trash"></i> Xóa
+                                            </button>
                                         </form>
-                                    </td>
-                                </tr>
+                                    </div>
+                                </td>
+                            </tr>
 
-                                <!-- Modal chỉnh sửa sân -->
-                                <div class="modal fade" id="editModal<?php echo $field['id']; ?>" tabindex="-1" aria-labelledby="editModalLabel<?php echo $field['id']; ?>" aria-hidden="true">
-                                    <div class="modal-dialog">
-                                        <div class="modal-content">
-                                            <div class="modal-header">
-                                                <h5 class="modal-title" id="editModalLabel<?php echo $field['id']; ?>">Chỉnh Sửa Sân</h5>
-                                                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-                                            </div>
-                                            <form method="POST">
-                                                <div class="modal-body">
-                                                    <div class="mb-3">
-                                                        <label for="name" class="form-label">Tên sân</label>
-                                                        <input type="text" name="name" class="form-control" value="<?php echo $field['name']; ?>" required>
+                            <!-- Modal chỉnh sửa sân -->
+                            <div class="modal fade" id="editModal<?php echo $field['id']; ?>" tabindex="-1" aria-labelledby="editModalLabel<?php echo $field['id']; ?>" aria-hidden="true">
+                                <div class="modal-dialog">
+                                    <div class="modal-content">
+                                        <div class="modal-header">
+                                            <h5 class="modal-title" id="editModalLabel<?php echo $field['id']; ?>">Chỉnh Sửa Sân</h5>
+                                            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                                        </div>
+                                        <form method="POST" enctype="multipart/form-data">
+                                            <div class="modal-body">
+                                                <div class="mb-3">
+                                                    <label for="name" class="form-label">Tên sân</label>
+                                                    <div class="input-group">
+                                                        <span class="input-group-text"><i class="bi bi-building"></i></span>
+                                                        <input type="text" name="name" class="form-control" value="<?php echo htmlspecialchars($field['name']); ?>" required>
                                                     </div>
-                                                    <div class="mb-3">
-                                                        <label for="address" class="form-label">Địa chỉ</label>
-                                                        <input type="text" name="address" class="form-control" value="<?php echo $field['address']; ?>" required>
+                                                </div>
+                                                <div class="mb-3">
+                                                    <label for="address" class="form-label">Địa chỉ</label>
+                                                    <div class="input-group">
+                                                        <span class="input-group-text"><i class="bi bi-geo-alt-fill"></i></span>
+                                                        <input type="text" name="address" class="form-control" value="<?php echo htmlspecialchars($field['address']); ?>" required>
                                                     </div>
-                                                    <div class="mb-3">
-                                                        <label for="price_per_hour" class="form-label">Giá/giờ (VND)</label>
+                                                </div>
+                                                <div class="mb-3">
+                                                    <label for="price_per_hour" class="form-label">Giá/giờ (VND)</label>
+                                                    <div class="input-group">
+                                                        <span class="input-group-text"><i class="bi bi-currency-dollar"></i></span>
                                                         <input type="number" name="price_per_hour" class="form-control" value="<?php echo $field['price_per_hour']; ?>" required>
                                                     </div>
-                                                    <div class="mb-3">
-                                                        <label for="open_time" class="form-label">Giờ mở cửa</label>
-                                                        <input type="time" name="open_time" class="form-control" value="<?php echo $field['open_time']; ?>" required>
-                                                    </div>
-                                                    <div class="mb-3">
-                                                        <label for="close_time" class="form-label">Giờ đóng cửa</label>
-                                                        <input type="time" name="close_time" class="form-control" value="<?php echo $field['close_time']; ?>" required>
-                                                    </div>
-                                                    <input type="hidden" name="field_id" value="<?php echo $field['id']; ?>">
                                                 </div>
-                                                <div class="modal-footer">
-                                                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Đóng</button>
-                                                    <button type="submit" name="edit_field" class="btn btn-primary">Lưu thay đổi</button>
+                                                <div class="mb-3">
+                                                    <label for="open_time" class="form-label">Giờ mở cửa</label>
+                                                    <div class="input-group">
+                                                        <span class="input-group-text"><i class="bi bi-clock"></i></span>
+                                                        <input type="time" name="open_time" class="form-control" value="<?php echo htmlspecialchars($field['open_time']); ?>" required>
+                                                    </div>
                                                 </div>
-                                            </form>
-                                        </div>
+                                                <div class="mb-3">
+                                                    <label for="close_time" class="form-label">Giờ đóng cửa</label>
+                                                    <div class="input-group">
+                                                        <span class="input-group-text"><i class="bi bi-clock"></i></span>
+                                                        <input type="time" name="close_time" class="form-control" value="<?php echo htmlspecialchars($field['close_time']); ?>" required>
+                                                    </div>
+                                                </div>
+                                                <div class="mb-3">
+                                                    <label for="field_image" class="form-label">Ảnh sân (JPEG, PNG, GIF, tối đa 5MB)</label>
+                                                    <input type="file" name="field_image" id="field_image" class="form-control">
+                                                    <?php if ($field['image']): ?>
+                                                        <p class="mt-2">Hiện tại: <img src="assets/img/<?php echo htmlspecialchars($field['image']); ?>" alt="Ảnh sân" style="max-width: 100px; border-radius: 5px;"></p>
+                                                    <?php endif; ?>
+                                                </div>
+                                                <input type="hidden" name="field_id" value="<?php echo $field['id']; ?>">
+                                                <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($csrf_token); ?>">
+                                            </div>
+                                            <div class="modal-footer">
+                                                <button type="button" class="btn btn-secondary d-flex align-items-center gap-2" data-bs-dismiss="modal">
+                                                    <i class="bi bi-x-circle"></i> Đóng
+                                                </button>
+                                                <button type="submit" name="edit_field" class="btn btn-primary d-flex align-items-center gap-2">
+                                                    <i class="bi bi-save-fill"></i> Lưu thay đổi
+                                                </button>
+                                            </div>
+                                        </form>
                                     </div>
                                 </div>
-                            <?php endforeach; ?>
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        <?php endif; ?>
-
-        <!-- Yêu cầu đặt sân -->
-        <h4 class="mb-3 mt-5">Yêu Cầu Đặt Sân</h4>
-        <?php if (empty($bookings)): ?>
-            <p>Chưa có yêu cầu đặt sân nào.</p>
-        <?php else: ?>
-            <div class="row">
-                <div class="col-md-12">
-                    <table class="table table-bordered">
-                        <thead>
-                            <tr>
-                                <th>Khách hàng</th>
-                                <th>Sân</th>
-                                <th>Ngày đặt</th>
-                                <th>Giờ bắt đầu</th>
-                                <th>Giờ kết thúc</th>
-                                <th>Tổng giá</th>
-                                <th>Hành động</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <?php foreach ($bookings as $booking): ?>
-                                <tr>
-                                    <td><?php echo $booking['customer_name']; ?></td>
-                                    <td><?php echo $booking['field_name']; ?></td>
-                                    <td><?php echo $booking['booking_date']; ?></td>
-                                    <td><?php echo $booking['start_time']; ?></td>
-                                    <td><?php echo $booking['end_time']; ?></td>
-                                    <td><?php echo number_format($booking['total_price'], 0, ',', '.') . ' VND'; ?></td>
-                                    <td>
-                                        <form method="POST" style="display:inline;">
-                                            <input type="hidden" name="booking_id" value="<?php echo $booking['id']; ?>">
-                                            <button type="submit" name="confirm_booking" class="btn btn-success btn-sm">Xác nhận</button>
-                                            <button type="submit" name="cancel_booking" class="btn btn-danger btn-sm">Hủy</button>
-                                        </form>
-                                    </td>
-                                </tr>
-                            <?php endforeach; ?>
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        <?php endif; ?>
-
-        <!-- Lịch đặt sân đã xác nhận -->
-        <h4 class="mb-3 mt-5">Lịch Đặt Sân Đã Xác Nhận</h4>
-        <?php if (empty($confirmed_bookings)): ?>
-            <p>Chưa có đặt sân nào được xác nhận.</p>
-        <?php else: ?>
-            <div class="row">
-                <div class="col-md-12">
-                    <table class="table table-bordered">
-                        <thead>
-                            <tr>
-                                <th>Khách hàng</th>
-                                <th>Sân</th>
-                                <th>Ngày đặt</th>
-                                <th>Giờ bắt đầu</th>
-                                <th>Giờ kết thúc</th>
-                                <th>Tổng giá</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <?php foreach ($confirmed_bookings as $booking): ?>
-                                <tr>
-                                    <td><?php echo $booking['customer_name']; ?></td>
-                                    <td><?php echo $booking['field_name']; ?></td>
-                                    <td><?php echo $booking['booking_date']; ?></td>
-                                    <td><?php echo $booking['start_time']; ?></td>
-                                    <td><?php echo $booking['end_time']; ?></td>
-                                    <td><?php echo number_format($booking['total_price'], 0, ',', '.') . ' VND'; ?></td>
-                                </tr>
-                            <?php endforeach; ?>
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        <?php endif; ?>
-
-        <!-- Doanh thu -->
-        <h4 class="mb-3 mt-5">Doanh Thu</h4>
-        <div class="row">
-            <div class="col-md-12">
-                <p><strong>Tổng doanh thu:</strong> <?php echo number_format($total_revenue, 0, ',', '.') . ' VND'; ?></p>
-                <h5>Doanh thu theo sân:</h5>
-                <?php if (empty($revenue_by_field)): ?>
-                    <p>Chưa có doanh thu nào.</p>
-                <?php else: ?>
-                    <ul>
-                        <?php foreach ($revenue_by_field as $rev): ?>
-                            <li><?php echo $rev['name'] . ': ' . number_format($rev['revenue'], 0, ',', '.') . ' VND'; ?></li>
+                            </div>
                         <?php endforeach; ?>
-                    </ul>
-                <?php endif; ?>
+                    </tbody>
+                </table>
             </div>
-        </div>
+        <?php endif; ?>
     </div>
 </section>
 

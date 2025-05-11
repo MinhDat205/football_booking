@@ -1,102 +1,124 @@
 <?php
 require_once 'includes/config.php';
 require_once 'includes/header.php';
+require_once 'includes/csrf.php';
 
-session_start();
-if (!isset($_SESSION['user_id']) || $_SESSION['account_type'] !== 'customer') {
+if (!isset($_SESSION['user_id'])) {
     header('Location: login.php');
     exit;
 }
 
 $user_id = $_SESSION['user_id'];
-$error = '';
-$success = '';
+$account_type = $_SESSION['account_type'];
 
-$stmt = $pdo->prepare("SELECT b.*, f.name AS field_name 
-                       FROM bookings b 
-                       JOIN fields f ON b.field_id = f.id 
-                       WHERE b.user_id = ? 
-                       ORDER BY b.created_at DESC");
-$stmt->execute([$user_id]);
-$bookings = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-// Xử lý hủy đặt sân
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['cancel_booking'])) {
-    $booking_id = (int)$_POST['booking_id'];
-    $stmt = $pdo->prepare("SELECT booking_date, start_time FROM bookings WHERE id = ? AND user_id = ? AND status = 'pending'");
-    $stmt->execute([$booking_id, $user_id]);
-    $booking = $stmt->fetch(PDO::FETCH_ASSOC);
-
-    if ($booking) {
-        $booking_time = strtotime($booking['booking_date'] . ' ' . $booking['start_time']);
-        $current_time = strtotime('now');
-        $hours_diff = ($booking_time - $current_time) / 3600;
-
-        if ($hours_diff < 24) {
-            $error = 'Không thể hủy đặt sân vì còn dưới 24 giờ trước giờ bắt đầu.';
-        } else {
-            $stmt = $pdo->prepare("UPDATE bookings SET status = 'cancelled' WHERE id = ?");
-            $stmt->execute([$booking_id]);
-            $success = 'Đã hủy đặt sân thành công!';
-            header('Location: history.php');
-            exit;
-        }
-    } else {
-        $error = 'Không tìm thấy đặt sân hoặc đặt sân không thể hủy.';
-    }
+$bookings = [];
+if ($account_type === 'customer') {
+    $stmt = $pdo->prepare("SELECT b.*, f.name AS field_name, u.full_name AS owner_name, f.owner_id AS owner_id 
+                           FROM bookings b 
+                           JOIN fields f ON b.field_id = f.id 
+                           JOIN users u ON f.owner_id = u.id 
+                           WHERE b.user_id = ? 
+                           ORDER BY b.booking_date DESC, b.start_time DESC");
+    $stmt->execute([$user_id]);
+    $bookings = $stmt->fetchAll(PDO::FETCH_ASSOC);
+} elseif ($account_type === 'owner') {
+    $stmt = $pdo->prepare("SELECT b.*, f.name AS field_name, u.full_name AS customer_name, u.id AS customer_id 
+                           FROM bookings b 
+                           JOIN fields f ON b.field_id = f.id 
+                           JOIN users u ON b.user_id = u.id 
+                           WHERE f.owner_id = ? 
+                           ORDER BY b.booking_date DESC, b.start_time DESC");
+    $stmt->execute([$user_id]);
+    $bookings = $stmt->fetchAll(PDO::FETCH_ASSOC);
 }
 ?>
 
-<section class="history py-5">
+<style>
+    /* Tiêu đề trang */
+    .section-title {
+        font-weight: 600;
+        color: #1e3c72;
+        font-size: 1.5rem;
+        margin-bottom: 1.5rem;
+    }
+    /* Bảng lịch sử đặt sân */
+    .history-table thead th {
+        font-size: 1rem;
+        padding: 12px;
+    }
+    .history-table tbody tr:hover {
+        background-color: #f8f9fa;
+    }
+    .history-table td {
+        padding: 12px;
+        font-size: 0.95rem;
+    }
+    .history-table .total-price {
+        color: #e74c3c;
+        font-weight: 600;
+        font-size: 1.1rem;
+    }
+    /* Responsive */
+    @media (max-width: 768px) {
+        .section-title {
+            font-size: 1.2rem;
+        }
+        .table-responsive {
+            overflow-x: auto;
+        }
+        .history-table thead th,
+        .history-table td {
+            padding: 10px;
+            font-size: 0.9rem;
+        }
+    }
+</style>
+
+<section class="history py-3">
     <div class="container">
-        <h2 class="text-center mb-4">Lịch Sử Đặt Sân</h2>
-
-        <?php if ($error): ?>
-            <div class="alert alert-danger"><?php echo $error; ?></div>
-        <?php endif; ?>
-        <?php if ($success): ?>
-            <div class="alert alert-success"><?php echo $success; ?></div>
-        <?php endif; ?>
-
+        <h2 class="section-title text-center">Lịch Sử Đặt Sân</h2>
         <?php if (empty($bookings)): ?>
-            <p class="text-center">Bạn chưa có đặt sân nào.</p>
+            <p class="text-center text-muted">Bạn chưa có lịch sử đặt sân.</p>
         <?php else: ?>
-            <div class="row">
-                <div class="col-md-10 offset-md-1">
-                    <table class="table table-bordered">
-                        <thead>
+            <div class="table-responsive">
+                <table class="table history-table">
+                    <thead>
+                        <tr>
+                            <?php if ($account_type === 'owner'): ?>
+                                <th>Khách hàng</th>
+                            <?php else: ?>
+                                <th>Chủ sân</th>
+                            <?php endif; ?>
+                            <th>Sân</th>
+                            <th>Ngày đặt</th>
+                            <th>Giờ bắt đầu</th>
+                            <th>Giờ kết thúc</th>
+                            <th>Tổng giá</th>
+                            <th>Trạng thái</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($bookings as $booking): ?>
                             <tr>
-                                <th>Ngày đặt</th>
-                                <th>Giờ bắt đầu</th>
-                                <th>Giờ kết thúc</th>
-                                <th>Tên sân</th>
-                                <th>Tổng giá</th>
-                                <th>Trạng thái</th>
-                                <th>Hành động</th>
+                                <?php if ($account_type === 'owner'): ?>
+                                    <td><?php echo htmlspecialchars($booking['customer_name']); ?></td>
+                                <?php else: ?>
+                                    <td><?php echo htmlspecialchars($booking['owner_name']); ?></td>
+                                <?php endif; ?>
+                                <td><?php echo htmlspecialchars($booking['field_name']); ?></td>
+                                <td><?php echo htmlspecialchars($booking['booking_date']); ?></td>
+                                <td><?php echo htmlspecialchars($booking['start_time']); ?></td>
+                                <td><?php echo htmlspecialchars($booking['end_time']); ?></td>
+                                <td class="total-price"><?php echo number_format($booking['total_price'], 0, ',', '.') . ' VND'; ?></td>
+                                <td>
+                                    <span class="badge <?php echo $booking['status'] === 'pending' ? 'bg-warning' : ($booking['status'] === 'confirmed' ? 'bg-success' : ($booking['status'] === 'cancelled' ? 'bg-danger' : 'bg-secondary')); ?>">
+                                        <?php echo htmlspecialchars($booking['status']); ?>
+                                    </span>
+                                </td>
                             </tr>
-                        </thead>
-                        <tbody>
-                            <?php foreach ($bookings as $booking): ?>
-                                <tr>
-                                    <td><?php echo $booking['booking_date']; ?></td>
-                                    <td><?php echo $booking['start_time']; ?></td>
-                                    <td><?php echo $booking['end_time']; ?></td>
-                                    <td><?php echo $booking['field_name']; ?></td>
-                                    <td><?php echo number_format($booking['total_price'], 0, ',', '.') . ' VND'; ?></td>
-                                    <td><?php echo $booking['status']; ?></td>
-                                    <td>
-                                        <?php if ($booking['status'] === 'pending'): ?>
-                                            <form method="POST" style="display:inline;">
-                                                <input type="hidden" name="booking_id" value="<?php echo $booking['id']; ?>">
-                                                <button type="submit" name="cancel_booking" class="btn btn-danger btn-sm">Hủy</button>
-                                            </form>
-                                        <?php endif; ?>
-                                    </td>
-                                </tr>
-                            <?php endforeach; ?>
-                        </tbody>
-                    </table>
-                </div>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
             </div>
         <?php endif; ?>
     </div>
