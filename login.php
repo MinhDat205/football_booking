@@ -42,23 +42,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $user = $stmt->fetch(PDO::FETCH_ASSOC);
 
             if ($user && password_verify($password, $user['password'])) {
-                $_SESSION['user_id'] = $user['id'];
-                $_SESSION['account_type'] = $user['account_type'];
-
-                // Chuyển hướng dựa trên loại tài khoản
-                $redirect_url = '';
-                if ($user['account_type'] === 'owner') {
-                    $redirect_url = 'history.php';
-                } elseif ($user['account_type'] === 'admin') {
-                    $redirect_url = 'admin_users.php';
+                if ($user['status'] === 'rejected') {
+                    $error = 'Tài khoản của bạn đã bị khóa. Vui lòng liên hệ quản trị viên để biết thêm chi tiết.';
                 } else {
-                    $redirect_url = 'search.php';
-                    if ($field_id) {
-                        $redirect_url .= '?field_id=' . $field_id;
+                    $_SESSION['user_id'] = $user['id'];
+                    $_SESSION['account_type'] = $user['account_type'];
+
+                    // Chuyển hướng dựa trên loại tài khoản
+                    $redirect_url = '';
+                    if ($user['account_type'] === 'owner') {
+                        $redirect_url = 'history.php';
+                    } elseif ($user['account_type'] === 'admin') {
+                        $redirect_url = 'admin_users.php';
+                    } else {
+                        $redirect_url = 'search.php';
+                        if ($field_id) {
+                            $redirect_url .= '?field_id=' . $field_id;
+                        }
                     }
+                    header('Location: ' . $redirect_url);
+                    exit;
                 }
-                header('Location: ' . $redirect_url);
-                exit;
             } else {
                 $error = 'Email hoặc mật khẩu không đúng.';
             }
@@ -165,10 +169,10 @@ require_once 'includes/header.php';
                 </button>
             </form>
             <div class="register-link">
+                <p><a href="forgot_password.php">Quên mật khẩu?</a></p> 
                 <p>Chưa có tài khoản? <a href="register.php">Đăng ký ngay</a></p>
             </div>
         </div>
     </div>
 </section>
 
-<?php require_once 'includes/footer.php'; ?>

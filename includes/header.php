@@ -393,6 +393,10 @@ $current_page = basename(parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH));
                         </ul>
                     </div>
                     <a href="/football_booking/profile.php" class="btn btn-outline-light">Hồ sơ</a>
+                    <?php if (isset(
+                        $_SESSION['account_type']) && in_array($_SESSION['account_type'], ['customer', 'owner'])): ?>
+                        <a href="/football_booking/support.php" class="btn btn-outline-light">Support</a>
+                    <?php endif; ?>
                 <?php else: ?>
                     <a href="/football_booking/login.php" class="btn btn-outline-light">Đăng nhập</a>
                     <a href="/football_booking/register.php" class="btn btn-outline-light">Đăng ký</a>
