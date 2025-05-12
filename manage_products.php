@@ -1,6 +1,5 @@
 <?php
 require_once 'includes/config.php';
-require_once 'includes/header.php';
 require_once 'includes/csrf.php';
 
 if (!isset($_SESSION['user_id']) || $_SESSION['account_type'] !== 'owner') {
@@ -87,6 +86,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_product'])) {
             }
         }
     }
+    // Lưu thông báo vào session nếu có lỗi
+    if ($error) {
+        $_SESSION['error'] = $error;
+    } elseif ($success) {
+        $_SESSION['success'] = $success;
+    }
 }
 
 // Xử lý chỉnh sửa sản phẩm
@@ -150,6 +155,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_product'])) {
             }
         }
     }
+    // Lưu thông báo vào session nếu có lỗi
+    if ($error) {
+        $_SESSION['error'] = $error;
+    } elseif ($success) {
+        $_SESSION['success'] = $success;
+    }
 }
 
 // Xử lý xóa sản phẩm
@@ -180,7 +191,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_product'])) {
         header('Location: manage_products.php');
         exit;
     }
+    // Lưu thông báo vào session nếu có lỗi
+    if ($error) {
+        $_SESSION['error'] = $error;
+    } elseif ($success) {
+        $_SESSION['success'] = $success;
+    }
 }
+
+// Sau khi xử lý logic, mới gọi header.php và hiển thị giao diện
+require_once 'includes/header.php';
+
+// Lấy thông báo từ session
+$error = isset($_SESSION['error']) ? $_SESSION['error'] : '';
+$success = isset($_SESSION['success']) ? $_SESSION['success'] : '';
+unset($_SESSION['error']);
+unset($_SESSION['success']);
 ?>
 
 <style>
