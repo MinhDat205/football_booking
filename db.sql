@@ -38,6 +38,19 @@ CREATE TABLE fields (
     status ENUM('pending', 'approved', 'rejected') DEFAULT 'pending',
     FOREIGN KEY (owner_id) REFERENCES users(id)
 );
+ALTER TABLE fields
+ADD COLUMN field_type ENUM('5', '7', '9', '11') NOT NULL DEFAULT '5';
+
+ALTER TABLE fields
+DROP COLUMN image;
+
+CREATE TABLE field_images (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    field_id INT NOT NULL,
+    image VARCHAR(255) NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (field_id) REFERENCES fields(id) ON DELETE CASCADE
+);
 
 ALTER TABLE fields
 ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;

@@ -60,12 +60,19 @@ $stmt = $pdo->prepare($query);
 $stmt->execute($params);
 $fields = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-// Lấy danh sách sản phẩm cho từng sân
+// Lấy danh sách sản phẩm và hình ảnh cho từng sân
 $products = [];
+$field_images = [];
 foreach ($fields as $field) {
+    // Lấy sản phẩm
     $stmt = $pdo->prepare("SELECT * FROM products WHERE field_id = ?");
     $stmt->execute([$field['id']]);
     $products[$field['id']] = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    // Lấy hình ảnh
+    $stmt = $pdo->prepare("SELECT * FROM field_images WHERE field_id = ?");
+    $stmt->execute([$field['id']]);
+    $field_images[$field['id']] = $stmt->fetchAll(PDO::FETCH_ASSOC);
 }
 
 // Hàm lấy dữ liệu thời tiết
@@ -282,10 +289,32 @@ require_once 'includes/header.php';
         background-color: #218838;
     }
     /* Card sân bóng */
-    .field-card .card-img-top {
+    .field-card .carousel {
+        height: 200px;
+        position: relative;
+    }
+    .field-card .carousel-item img {
         height: 200px;
         object-fit: cover;
         border-bottom: 1px solid #e0e4e9;
+    }
+    /* Đảm bảo nút chuyển ảnh hiển thị rõ ràng */
+    .field-card .carousel-control-prev,
+    .field-card .carousel-control-next {
+        width: 15%;
+        background: rgba(0, 0, 0, 0.3);
+        opacity: 0.8;
+        transition: opacity 0.3s;
+    }
+    .field-card .carousel-control-prev:hover,
+    .field-card .carousel-control-next:hover {
+        opacity: 1;
+    }
+    .field-card .carousel-control-prev-icon,
+    .field-card .carousel-control-next-icon {
+        background-color: #000;
+        border-radius: 50%;
+        padding: 10px;
     }
     .field-card .card-title {
         font-size: 1.2rem;
@@ -381,7 +410,10 @@ require_once 'includes/header.php';
         .search-form .btn-primary {
             font-size: 0.9rem;
         }
-        .field-card .card-img-top {
+        .field-card .carousel {
+            height: 150px;
+        }
+        .field-card .carousel-item img {
             height: 150px;
         }
         .field-card .card-title {
@@ -458,11 +490,39 @@ require_once 'includes/header.php';
                 <?php foreach ($fields as $field): ?>
                     <div class="col-md-4 col-sm-6 mb-3">
                         <div class="card field-card">
-                            <img src="assets/img/<?php echo htmlspecialchars($field['image'] ?: 'default.jpg'); ?>" class="card-img-top" alt="<?php echo htmlspecialchars($field['name']); ?>">
+                            <!-- Carousel hiển thị nhiều hình ảnh -->
+                            <div id="carouselField<?php echo $field['id']; ?>" class="carousel slide" data-bs-ride="carousel">
+                                <div class="carousel-inner">
+                                    <?php if (!empty($field_images[$field['id']])): ?>
+                                        <?php foreach ($field_images[$field['id']] as $index => $image): ?>
+                                            <div class="carousel-item <?php echo $index === 0 ? 'active' : ''; ?>">
+                                                <img src="assets/img/<?php echo htmlspecialchars($image['image']); ?>" class="d-block w-100" alt="<?php echo htmlspecialchars($field['name']); ?>">
+                                            </div>
+                                        <?php endforeach; ?>
+                                    <?php else: ?>
+                                        <div class="carousel-item active">
+                                            <img src="assets/img/default.jpg" class="d-block w-100" alt="Ảnh mặc định">
+                                        </div>
+                                    <?php endif; ?>
+                                </div>
+                                <?php if (count($field_images[$field['id']]) > 1): ?>
+                                    <button class="carousel-control-prev" type="button" data-bs-target="#carouselField<?php echo $field['id']; ?>" data-bs-slide="prev">
+                                        <span class="carousel-control-prev-icon" aria-hidden="true"></span>
+                                        <span class="visually-hidden">Previous</span>
+                                    </button>
+                                    <button class="carousel-control-next" type="button" data-bs-target="#carouselField<?php echo $field['id']; ?>" data-bs-slide="next">
+                                        <span class="carousel-control-next-icon" aria-hidden="true"></span>
+                                        <span class="visually-hidden">Next</span>
+                                    </button>
+                                <?php endif; ?>
+                            </div>
                             <div class="card-body">
                                 <h5 class="card-title"><?php echo htmlspecialchars($field['name']); ?></h5>
-                                <p class="card-text"><i class="bi bi-geo-alt-fill"></i> <?php echo htmlspecialchars($field['address']); ?></p>
-                                <p class="card-text price"><i class="bi bi-currency-dollar"></i> <?php echo number_format($field['price_per_hour'], 0, ',', '.') . ' VND/giờ'; ?></p>
+                                <p class="card-text"><i class="bi bi-geo-alt-fill"></i> Địa chỉ: <?php echo htmlspecialchars($field['address']); ?></p>
+                                <p class="card-text"><i class="bi bi-people"></i> Loại sân: <?php echo htmlspecialchars($field['field_type']); ?> người</p>
+                                <p class="card-text"><i class="bi bi-clock"></i> Giờ mở cửa: <?php echo htmlspecialchars($field['open_time']); ?></p>
+                                <p class="card-text"><i class="bi bi-clock"></i> Giờ đóng cửa: <?php echo htmlspecialchars($field['close_time']); ?></p>
+                                <p class="card-text price"><i class="bi bi-currency-dollar"></i> Giá: <?php echo number_format($field['price_per_hour'], 0, ',', '.') . ' VND/giờ'; ?></p>
                                 <p class="card-text rating"><i class="bi bi-star-fill text-warning"></i> Đánh giá: <?php echo $field['avg_rating'] ? round($field['avg_rating'], 1) : 'Chưa có'; ?> sao</p>
                                 <a href="<?php echo isset($_SESSION['user_id']) ? 'search.php?field_id=' . $field['id'] : 'login.php?field_id=' . $field['id']; ?>" 
                                    class="btn btn-primary w-100 d-flex align-items-center justify-content-center gap-2"

@@ -1,8 +1,8 @@
 <?php
 require_once 'includes/config.php';
-require_once 'includes/header.php';
 require_once 'includes/csrf.php';
 
+// Kiểm tra nếu người dùng không phải chủ sân hoặc không được phê duyệt, chuyển hướng trước khi xuất dữ liệu
 if (!isset($_SESSION['user_id']) || $_SESSION['account_type'] !== 'owner') {
     header('Location: login.php');
     exit;
@@ -18,168 +18,212 @@ if ($user['status'] !== 'approved') {
     exit;
 }
 
-$error = '';
-$success = '';
 $csrf_token = generateCsrfToken();
+
+// Xử lý thêm sân, chỉnh sửa sân, xóa sân trước khi xuất bất kỳ dữ liệu nào
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $token = isset($_POST['csrf_token']) ? $_POST['csrf_token'] : '';
+    $error = '';
+    $success = '';
+
+    if (!verifyCsrfToken($token)) {
+        $error = 'Yêu cầu không hợp lệ. Vui lòng thử lại.';
+    } else {
+        // Xử lý thêm sân
+        if (isset($_POST['add_field'])) {
+            $name = trim($_POST['name']);
+            $address = trim($_POST['address']);
+            $price_per_hour = (float)$_POST['price_per_hour'];
+            $open_time = $_POST['open_time'];
+            $close_time = $_POST['close_time'];
+            $field_type = $_POST['field_type'];
+
+            // Kiểm tra dữ liệu
+            if (empty($name) || empty($address) || $price_per_hour <= 0 || empty($open_time) || empty($close_time) || empty($field_type)) {
+                $error = 'Vui lòng điền đầy đủ thông tin sân.';
+            } elseif (strlen($name) > 255) {
+                $error = 'Tên sân không được vượt quá 255 ký tự.';
+            } elseif (strlen($address) > 255) {
+                $error = 'Địa chỉ sân không được vượt quá 255 ký tự.';
+            } elseif (!preg_match('/^\d{2}:\d{2}$/', $open_time) || !preg_match('/^\d{2}:\d{2}$/', $close_time)) {
+                $error = 'Giờ mở/đóng cửa không hợp lệ.';
+            } elseif (strtotime($close_time) <= strtotime($open_time)) {
+                $error = 'Giờ đóng cửa phải sau giờ mở cửa.';
+            } elseif (!in_array($field_type, ['5', '7', '9', '11'])) {
+                $error = 'Loại sân không hợp lệ.';
+            } else {
+                // Lưu thông tin sân vào bảng fields
+                $stmt = $pdo->prepare("INSERT INTO fields (owner_id, name, address, price_per_hour, open_time, close_time, field_type, status) 
+                                       VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')");
+                $stmt->execute([$user_id, $name, $address, $price_per_hour, $open_time, $close_time, $field_type]);
+                $field_id = $pdo->lastInsertId();
+
+                // Xử lý tải lên nhiều hình ảnh
+                if (isset($_FILES['field_images']) && !empty($_FILES['field_images']['name'][0])) {
+                    $allowed_types = ['image/jpeg', 'image/png', 'image/gif'];
+                    $max_size = 5 * 1024 * 1024; // 5MB
+
+                    foreach ($_FILES['field_images']['name'] as $key => $image_name) {
+                        if ($_FILES['field_images']['error'][$key] === UPLOAD_ERR_OK) {
+                            if (!in_array($_FILES['field_images']['type'][$key], $allowed_types)) {
+                                $error = 'Chỉ hỗ trợ định dạng ảnh JPEG, PNG, GIF.';
+                                break;
+                            } elseif ($_FILES['field_images']['size'][$key] > $max_size) {
+                                $error = 'Kích thước ảnh không được vượt quá 5MB.';
+                                break;
+                            } else {
+                                $image_name = 'field_' . $field_id . '_' . time() . '_' . $key . '.' . pathinfo($_FILES['field_images']['name'][$key], PATHINFO_EXTENSION);
+                                $upload_path = 'assets/img/' . $image_name;
+
+                                if (move_uploaded_file($_FILES['field_images']['tmp_name'][$key], $upload_path)) {
+                                    $stmt = $pdo->prepare("INSERT INTO field_images (field_id, image) VALUES (?, ?)");
+                                    $stmt->execute([$field_id, $image_name]);
+                                } else {
+                                    $error = 'Không thể tải ảnh lên. Vui lòng thử lại.';
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (!$error) {
+                    $success = 'Thêm sân thành công! Đang chờ admin phê duyệt.';
+                }
+            }
+        }
+
+        // Xử lý chỉnh sửa sân
+        if (isset($_POST['edit_field'])) {
+            $field_id = (int)$_POST['field_id'];
+            $name = trim($_POST['name']);
+            $address = trim($_POST['address']);
+            $price_per_hour = (float)$_POST['price_per_hour'];
+            $open_time = $_POST['open_time'];
+            $close_time = $_POST['close_time'];
+            $field_type = $_POST['field_type'];
+
+            // Kiểm tra dữ liệu
+            if (empty($name) || empty($address) || $price_per_hour <= 0 || empty($open_time) || empty($close_time) || empty($field_type)) {
+                $error = 'Vui lòng điền đầy đủ thông tin sân.';
+            } elseif (strlen($name) > 255) {
+                $error = 'Tên sân không được vượt quá 255 ký tự.';
+            } elseif (strlen($address) > 255) {
+                $error = 'Địa chỉ sân không được vượt quá 255 ký tự.';
+            } elseif (!preg_match('/^\d{2}:\d{2}$/', $open_time) || !preg_match('/^\d{2}:\d{2}$/', $close_time)) {
+                $error = 'Giờ mở/đóng cửa không hợp lệ.';
+            } elseif (strtotime($close_time) <= strtotime($open_time)) {
+                $error = 'Giờ đóng cửa phải sau giờ mở cửa.';
+            } elseif (!in_array($field_type, ['5', '7', '9', '11'])) {
+                $error = 'Loại sân không hợp lệ.';
+            } else {
+                // Cập nhật thông tin sân
+                $stmt = $pdo->prepare("UPDATE fields SET name = ?, address = ?, price_per_hour = ?, open_time = ?, close_time = ?, field_type = ? WHERE id = ? AND owner_id = ?");
+                $stmt->execute([$name, $address, $price_per_hour, $open_time, $close_time, $field_type, $field_id, $user_id]);
+
+                // Xử lý tải lên hình ảnh mới (nếu có)
+                if (isset($_FILES['field_images']) && !empty($_FILES['field_images']['name'][0])) {
+                    $allowed_types = ['image/jpeg', 'image/png', 'image/gif'];
+                    $max_size = 5 * 1024 * 1024; // 5MB
+
+                    foreach ($_FILES['field_images']['name'] as $key => $image_name) {
+                        if ($_FILES['field_images']['error'][$key] === UPLOAD_ERR_OK) {
+                            if (!in_array($_FILES['field_images']['type'][$key], $allowed_types)) {
+                                $error = 'Chỉ hỗ trợ định dạng ảnh JPEG, PNG, GIF.';
+                                break;
+                            } elseif ($_FILES['field_images']['size'][$key] > $max_size) {
+                                $error = 'Kích thước ảnh không được vượt quá 5MB.';
+                                break;
+                            } else {
+                                $image_name = 'field_' . $field_id . '_' . time() . '_' . $key . '.' . pathinfo($_FILES['field_images']['name'][$key], PATHINFO_EXTENSION);
+                                $upload_path = 'assets/img/' . $image_name;
+
+                                if (move_uploaded_file($_FILES['field_images']['tmp_name'][$key], $upload_path)) {
+                                    $stmt = $pdo->prepare("INSERT INTO field_images (field_id, image) VALUES (?, ?)");
+                                    $stmt->execute([$field_id, $image_name]);
+                                } else {
+                                    $error = 'Không thể tải ảnh lên. Vui lòng thử lại.';
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (!$error) {
+                    $success = 'Cập nhật sân thành công!';
+                }
+            }
+        }
+
+        // Xử lý xóa hình ảnh
+        if (isset($_POST['delete_image'])) {
+            $image_id = (int)$_POST['image_id'];
+            $field_id = (int)$_POST['field_id'];
+
+            // Kiểm tra xem hình ảnh có thuộc về sân của chủ sân không
+            $stmt = $pdo->prepare("SELECT fi.image FROM field_images fi 
+                                   JOIN fields f ON fi.field_id = f.id 
+                                   WHERE fi.id = ? AND fi.field_id = ? AND f.owner_id = ?");
+            $stmt->execute([$image_id, $field_id, $user_id]);
+            $image = $stmt->fetch(PDO::FETCH_ASSOC);
+
+            if ($image) {
+                // Xóa file hình ảnh
+                if (file_exists('assets/img/' . $image['image'])) {
+                    unlink('assets/img/' . $image['image']);
+                }
+                // Xóa bản ghi trong bảng field_images
+                $stmt = $pdo->prepare("DELETE FROM field_images WHERE id = ?");
+                $stmt->execute([$image_id]);
+                $success = 'Xóa hình ảnh thành công!';
+            } else {
+                $error = 'Hình ảnh không hợp lệ.';
+            }
+        }
+
+        // Xử lý xóa sân
+        if (isset($_POST['delete_field'])) {
+            $field_id = (int)$_POST['field_id'];
+
+            // Xóa sân (hình ảnh sẽ tự động bị xóa nhờ ON DELETE CASCADE)
+            $stmt = $pdo->prepare("DELETE FROM fields WHERE id = ? AND owner_id = ?");
+            $stmt->execute([$field_id, $user_id]);
+            $success = 'Xóa sân thành công!';
+        }
+    }
+
+    // Lưu thông báo vào session và chuyển hướng
+    if ($error) {
+        $_SESSION['error'] = $error;
+    } elseif ($success) {
+        $_SESSION['success'] = $success;
+    }
+    header('Location: manage_field.php');
+    exit;
+}
 
 // Lấy danh sách sân của chủ sân
 $stmt = $pdo->prepare("SELECT * FROM fields WHERE owner_id = ?");
 $stmt->execute([$user_id]);
 $fields = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-// Xử lý thêm sân
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_field'])) {
-    $token = isset($_POST['csrf_token']) ? $_POST['csrf_token'] : '';
-
-    if (!verifyCsrfToken($token)) {
-        $error = 'Yêu cầu không hợp lệ. Vui lòng thử lại.';
-    } else {
-        $name = trim($_POST['name']);
-        $address = trim($_POST['address']);
-        $price_per_hour = (float)$_POST['price_per_hour'];
-        $open_time = $_POST['open_time'];
-        $close_time = $_POST['close_time'];
-        $field_image = '';
-
-        // Kiểm tra dữ liệu
-        if (empty($name) || empty($address) || $price_per_hour <= 0 || empty($open_time) || empty($close_time)) {
-            $error = 'Vui lòng điền đầy đủ thông tin sân.';
-        } elseif (strlen($name) > 255) {
-            $error = 'Tên sân không được vượt quá 255 ký tự.';
-        } elseif (strlen($address) > 255) {
-            $error = 'Địa chỉ sân không được vượt quá 255 ký tự.';
-        } elseif (!preg_match('/^\d{2}:\d{2}$/', $open_time) || !preg_match('/^\d{2}:\d{2}$/', $close_time)) {
-            $error = 'Giờ mở/đóng cửa không hợp lệ.';
-        } elseif (strtotime($close_time) <= strtotime($open_time)) {
-            $error = 'Giờ đóng cửa phải sau giờ mở cửa.';
-        } else {
-            // Xử lý tải ảnh sân
-            if (isset($_FILES['field_image']) && $_FILES['field_image']['error'] === UPLOAD_ERR_OK) {
-                $allowed_types = ['image/jpeg', 'image/png', 'image/gif'];
-                $max_size = 5 * 1024 * 1024; // 5MB
-
-                if (!in_array($_FILES['field_image']['type'], $allowed_types)) {
-                    $error = 'Chỉ hỗ trợ định dạng ảnh JPEG, PNG, GIF.';
-                } elseif ($_FILES['field_image']['size'] > $max_size) {
-                    $error = 'Kích thước ảnh không được vượt quá 5MB.';
-                } else {
-                    $image_name = 'field_' . $user_id . '_' . time() . '.' . pathinfo($_FILES['field_image']['name'], PATHINFO_EXTENSION);
-                    $upload_path = 'assets/img/' . $image_name;
-
-                    if (move_uploaded_file($_FILES['field_image']['tmp_name'], $upload_path)) {
-                        $field_image = $image_name;
-                    } else {
-                        $error = 'Không thể tải ảnh lên. Vui lòng thử lại.';
-                    }
-                }
-            }
-
-            if (!$error) {
-                $stmt = $pdo->prepare("INSERT INTO fields (owner_id, name, address, price_per_hour, open_time, close_time, image, status) 
-                                       VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')");
-                $stmt->execute([$user_id, $name, $address, $price_per_hour, $open_time, $close_time, $field_image]);
-                $success = 'Thêm sân thành công! Đang chờ admin phê duyệt.';
-                header('Location: manage_field.php');
-                exit;
-            }
-        }
-    }
+// Lấy danh sách hình ảnh cho từng sân
+$field_images = [];
+foreach ($fields as $field) {
+    $stmt = $pdo->prepare("SELECT * FROM field_images WHERE field_id = ?");
+    $stmt->execute([$field['id']]);
+    $field_images[$field['id']] = $stmt->fetchAll(PDO::FETCH_ASSOC);
 }
 
-// Xử lý chỉnh sửa sân
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_field'])) {
-    $token = isset($_POST['csrf_token']) ? $_POST['csrf_token'] : '';
+// Lấy thông báo từ session nếu có
+$error = isset($_SESSION['error']) ? $_SESSION['error'] : '';
+$success = isset($_SESSION['success']) ? $_SESSION['success'] : '';
+unset($_SESSION['error']);
+unset($_SESSION['success']);
 
-    if (!verifyCsrfToken($token)) {
-        $error = 'Yêu cầu không hợp lệ. Vui lòng thử lại.';
-    } else {
-        $field_id = (int)$_POST['field_id'];
-        $name = trim($_POST['name']);
-        $address = trim($_POST['address']);
-        $price_per_hour = (float)$_POST['price_per_hour'];
-        $open_time = $_POST['open_time'];
-        $close_time = $_POST['close_time'];
-
-        // Lấy thông tin sân hiện tại
-        $stmt = $pdo->prepare("SELECT image FROM fields WHERE id = ? AND owner_id = ?");
-        $stmt->execute([$field_id, $user_id]);
-        $current_field = $stmt->fetch(PDO::FETCH_ASSOC);
-        $field_image = $current_field['image'];
-
-        // Kiểm tra dữ liệu
-        if (empty($name) || empty($address) || $price_per_hour <= 0 || empty($open_time) || empty($close_time)) {
-            $error = 'Vui lòng điền đầy đủ thông tin sân.';
-        } elseif (strlen($name) > 255) {
-            $error = 'Tên sân không được vượt quá 255 ký tự.';
-        } elseif (strlen($address) > 255) {
-            $error = 'Địa chỉ sân không được vượt quá 255 ký tự.';
-        } elseif (!preg_match('/^\d{2}:\d{2}$/', $open_time) || !preg_match('/^\d{2}:\d{2}$/', $close_time)) {
-            $error = 'Giờ mở/đóng cửa không hợp lệ.';
-        } elseif (strtotime($close_time) <= strtotime($open_time)) {
-            $error = 'Giờ đóng cửa phải sau giờ mở cửa.';
-        } else {
-            // Xử lý tải ảnh mới (nếu có)
-            if (isset($_FILES['field_image']) && $_FILES['field_image']['error'] === UPLOAD_ERR_OK) {
-                $allowed_types = ['image/jpeg', 'image/png', 'image/gif'];
-                $max_size = 5 * 1024 * 1024; // 5MB
-
-                if (!in_array($_FILES['field_image']['type'], $allowed_types)) {
-                    $error = 'Chỉ hỗ trợ định dạng ảnh JPEG, PNG, GIF.';
-                } elseif ($_FILES['field_image']['size'] > $max_size) {
-                    $error = 'Kích thước ảnh không được vượt quá 5MB.';
-                } else {
-                    $image_name = 'field_' . $user_id . '_' . time() . '.' . pathinfo($_FILES['field_image']['name'], PATHINFO_EXTENSION);
-                    $upload_path = 'assets/img/' . $image_name;
-
-                    if (move_uploaded_file($_FILES['field_image']['tmp_name'], $upload_path)) {
-                        // Xóa ảnh cũ nếu có
-                        if ($field_image && file_exists('assets/img/' . $field_image)) {
-                            unlink('assets/img/' . $field_image);
-                        }
-                        $field_image = $image_name;
-                    } else {
-                        $error = 'Không thể tải ảnh lên. Vui lòng thử lại.';
-                    }
-                }
-            }
-
-            if (!$error) {
-                $stmt = $pdo->prepare("UPDATE fields SET name = ?, address = ?, price_per_hour = ?, open_time = ?, close_time = ?, image = ? WHERE id = ? AND owner_id = ?");
-                $stmt->execute([$name, $address, $price_per_hour, $open_time, $close_time, $field_image, $field_id, $user_id]);
-                $success = 'Cập nhật sân thành công!';
-                header('Location: manage_field.php');
-                exit;
-            }
-        }
-    }
-}
-
-// Xử lý xóa sân
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_field'])) {
-    $token = isset($_POST['csrf_token']) ? $_POST['csrf_token'] : '';
-
-    if (!verifyCsrfToken($token)) {
-        $error = 'Yêu cầu không hợp lệ. Vui lòng thử lại.';
-    } else {
-        $field_id = (int)$_POST['field_id'];
-        
-        // Lấy thông tin sân để xóa ảnh
-        $stmt = $pdo->prepare("SELECT image FROM fields WHERE id = ? AND owner_id = ?");
-        $stmt->execute([$field_id, $user_id]);
-        $field = $stmt->fetch(PDO::FETCH_ASSOC);
-
-        // Xóa ảnh nếu có
-        if ($field['image'] && file_exists('assets/img/' . $field['image'])) {
-            unlink('assets/img/' . $field['image']);
-        }
-
-        $stmt = $pdo->prepare("DELETE FROM fields WHERE id = ? AND owner_id = ?");
-        $stmt->execute([$field_id, $user_id]);
-        $success = 'Xóa sân thành công!';
-        header('Location: manage_field.php');
-        exit;
-    }
-}
+// Chỉ bao gồm header.php sau khi xử lý logic
+require_once 'includes/header.php';
 ?>
 
 <style>
@@ -263,6 +307,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_field'])) {
     .modal .input-group-text {
         border-radius: 5px 0 0 5px;
     }
+    /* Hình ảnh trong modal và preview */
+    .image-preview img {
+        max-width: 100px;
+        margin: 5px;
+        border-radius: 5px;
+    }
+    .preview-container img {
+        max-width: 100px;
+        margin: 5px;
+        border-radius: 5px;
+    }
     /* Responsive */
     @media (max-width: 768px) {
         .section-title {
@@ -297,6 +352,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_field'])) {
         .modal-title {
             font-size: 1.2rem;
         }
+        .image-preview img,
+        .preview-container img {
+            max-width: 80px;
+        }
     }
 </style>
 
@@ -319,13 +378,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_field'])) {
         <!-- Form thêm sân mới -->
         <h5 class="sub-title">Thêm Sân Mới</h5>
         <form method="POST" class="row g-3 mb-3 manage-form" enctype="multipart/form-data">
-            <div class="col-md-3 col-sm-6">
+            <div class="col-md-2 col-sm-6">
                 <div class="input-group">
                     <span class="input-group-text"><i class="bi bi-building"></i></span>
                     <input type="text" name="name" class="form-control" placeholder="Tên sân" required>
                 </div>
             </div>
-            <div class="col-md-3 col-sm-6">
+            <div class="col-md-2 col-sm-6">
                 <div class="input-group">
                     <span class="input-group-text"><i class="bi bi-geo-alt-fill"></i></span>
                     <input type="text" name="address" class="form-control" placeholder="Địa chỉ" required>
@@ -350,7 +409,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_field'])) {
                 </div>
             </div>
             <div class="col-md-2 col-sm-6">
-                <input type="file" name="field_image" class="form-control">
+                <div class="input-group">
+                    <span class="input-group-text"><i class="bi bi-people"></i></span>
+                    <select name="field_type" class="form-select" required>
+                        <option value="" disabled selected>Loại sân</option>
+                        <option value="5">Sân 5 người</option>
+                        <option value="7">Sân 7 người</option>
+                        <option value="9">Sân 9 người</option>
+                        <option value="11">Sân 11 người</option>
+                    </select>
+                </div>
+            </div>
+            <div class="col-md-2 col-sm-6">
+                <label for="field_images" class="form-label">Hình ảnh sân (JPEG, PNG, GIF, tối đa 5MB - Có thể chọn nhiều ảnh)</label>
+                <input type="file" name="field_images[]" id="field_images_add" class="form-control" multiple>
+                <div id="preview_add" class="preview-container mt-2"></div>
             </div>
             <div class="col-md-2 col-sm-6 d-flex align-items-end">
                 <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($csrf_token); ?>">
@@ -374,7 +447,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_field'])) {
                             <th>Giá/giờ</th>
                             <th>Giờ mở cửa</th>
                             <th>Giờ đóng cửa</th>
-                            <th>Ảnh</th>
+                            <th>Loại sân</th>
                             <th>Trạng thái</th>
                             <th>Hành động</th>
                         </tr>
@@ -387,13 +460,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_field'])) {
                                 <td class="price"><?php echo number_format($field['price_per_hour'], 0, ',', '.') . ' VND'; ?></td>
                                 <td><?php echo htmlspecialchars($field['open_time']); ?></td>
                                 <td><?php echo htmlspecialchars($field['close_time']); ?></td>
-                                <td>
-                                    <?php if ($field['image']): ?>
-                                        <img src="assets/img/<?php echo htmlspecialchars($field['image']); ?>" alt="<?php echo htmlspecialchars($field['name']); ?>" style="max-width: 50px; border-radius: 5px;">
-                                    <?php else: ?>
-                                        <span class="text-muted">Không có ảnh</span>
-                                    <?php endif; ?>
-                                </td>
+                                <td><?php echo htmlspecialchars($field['field_type']); ?> người</td>
                                 <td>
                                     <span class="badge <?php echo $field['status'] === 'approved' ? 'bg-success' : ($field['status'] === 'pending' ? 'bg-warning' : 'bg-danger'); ?>">
                                         <?php echo htmlspecialchars($field['status']); ?>
@@ -461,11 +528,43 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_field'])) {
                                                     </div>
                                                 </div>
                                                 <div class="mb-3">
-                                                    <label for="field_image" class="form-label">Ảnh sân (JPEG, PNG, GIF, tối đa 5MB)</label>
-                                                    <input type="file" name="field_image" id="field_image" class="form-control">
-                                                    <?php if ($field['image']): ?>
-                                                        <p class="mt-2">Hiện tại: <img src="assets/img/<?php echo htmlspecialchars($field['image']); ?>" alt="Ảnh sân" style="max-width: 100px; border-radius: 5px;"></p>
-                                                    <?php endif; ?>
+                                                    <label for="field_type" class="form-label">Loại sân</label>
+                                                    <div class="input-group">
+                                                        <span class="input-group-text"><i class="bi bi-people"></i></span>
+                                                        <select name="field_type" class="form-select" required>
+                                                            <option value="5" <?php echo $field['field_type'] === '5' ? 'selected' : ''; ?>>Sân 5 người</option>
+                                                            <option value="7" <?php echo $field['field_type'] === '7' ? 'selected' : ''; ?>>Sân 7 người</option>
+                                                            <option value="9" <?php echo $field['field_type'] === '9' ? 'selected' : ''; ?>>Sân 9 người</option>
+                                                            <option value="11" <?php echo $field['field_type'] === '11' ? 'selected' : ''; ?>>Sân 11 người</option>
+                                                        </select>
+                                                    </div>
+                                                </div>
+                                                <div class="mb-3">
+                                                    <label class="form-label">Hình ảnh hiện tại</label>
+                                                    <div class="image-preview">
+                                                        <?php if (!empty($field_images[$field['id']])): ?>
+                                                            <?php foreach ($field_images[$field['id']] as $image): ?>
+                                                                <div class="d-inline-block position-relative">
+                                                                    <img src="assets/img/<?php echo htmlspecialchars($image['image']); ?>" alt="Hình ảnh sân">
+                                                                    <form method="POST" style="display:inline;" onsubmit="return confirm('Bạn có chắc muốn xóa hình ảnh này?');">
+                                                                        <input type="hidden" name="image_id" value="<?php echo $image['id']; ?>">
+                                                                        <input type="hidden" name="field_id" value="<?php echo $field['id']; ?>">
+                                                                        <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($csrf_token); ?>">
+                                                                        <button type="submit" name="delete_image" class="btn btn-danger btn-sm position-absolute top-0 end-0">
+                                                                            <i class="bi bi-trash"></i>
+                                                                        </button>
+                                                                    </form>
+                                                                </div>
+                                                            <?php endforeach; ?>
+                                                        <?php else: ?>
+                                                            <p class="text-muted">Chưa có hình ảnh nào.</p>
+                                                        <?php endif; ?>
+                                                    </div>
+                                                </div>
+                                                <div class="mb-3">
+                                                    <label for="field_images_edit_<?php echo $field['id']; ?>" class="form-label">Thêm hình ảnh mới (JPEG, PNG, GIF, tối đa 5MB - Có thể chọn nhiều ảnh)</label>
+                                                    <input type="file" name="field_images[]" id="field_images_edit_<?php echo $field['id']; ?>" class="form-control" multiple>
+                                                    <div id="preview_edit_<?php echo $field['id']; ?>" class="preview-container mt-2"></div>
                                                 </div>
                                                 <input type="hidden" name="field_id" value="<?php echo $field['id']; ?>">
                                                 <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($csrf_token); ?>">
@@ -489,5 +588,47 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_field'])) {
         <?php endif; ?>
     </div>
 </section>
+
+<script>
+// JavaScript để hiển thị xem trước hình ảnh khi thêm sân
+document.getElementById('field_images_add').addEventListener('change', function(event) {
+    const preview = document.getElementById('preview_add');
+    preview.innerHTML = ''; // Xóa các hình ảnh xem trước cũ
+    const files = event.target.files;
+    for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        if (file) {
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const img = document.createElement('img');
+                img.src = e.target.result;
+                preview.appendChild(img);
+            };
+            reader.readAsDataURL(file);
+        }
+    }
+});
+
+// JavaScript để hiển thị xem trước hình ảnh khi chỉnh sửa sân
+<?php foreach ($fields as $field): ?>
+    document.getElementById('field_images_edit_<?php echo $field['id']; ?>').addEventListener('change', function(event) {
+        const preview = document.getElementById('preview_edit_<?php echo $field['id']; ?>');
+        preview.innerHTML = ''; // Xóa các hình ảnh xem trước cũ
+        const files = event.target.files;
+        for (let i = 0; i < files.length; i++) {
+            const file = files[i];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    const img = document.createElement('img');
+                    img.src = e.target.result;
+                    preview.appendChild(img);
+                };
+                reader.readAsDataURL(file);
+            }
+        }
+    });
+<?php endforeach; ?>
+</script>
 
 <?php require_once 'includes/footer.php'; ?>
