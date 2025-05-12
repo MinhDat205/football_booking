@@ -2,25 +2,16 @@
 require_once 'includes/csrf.php';
 $csrf_token = generateCsrfToken();
 
-// Lấy số lượng thông báo chưa đọc và danh sách thông báo nếu người dùng đã đăng nhập
+// Lấy số lượng thông báo chưa đọc, số lượng tin nhắn chưa đọc và danh sách thông báo nếu người dùng đã đăng nhập
 $unread_notifications_count = 0;
+$unread_messages_count = 0; // Thêm biến để đếm tin nhắn chưa đọc
 $notifications = [];
 $error = '';
 
 if (isset($_SESSION['user_id'])) {
     $user_id = $_SESSION['user_id'];
 
-    // Lấy số lượng thông báo chưa đọc
-    $stmt = $pdo->prepare("SELECT COUNT(*) FROM notifications WHERE user_id = ? AND is_read = 0");
-    $stmt->execute([$user_id]);
-    $unread_notifications_count = $stmt->fetchColumn();
-
-    // Lấy danh sách thông báo
-    $stmt = $pdo->prepare("SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 5");
-    $stmt->execute([$user_id]);
-    $notifications = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-    // Xử lý đánh dấu thông báo đã đọc
+    // Xử lý đánh dấu thông báo đã đọc trước khi tính số lượng
     if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['mark_notification_read'])) {
         $token = isset($_POST['csrf_token']) ? $_POST['csrf_token'] : '';
         if (!verifyCsrfToken($token)) {
@@ -34,11 +25,24 @@ if (isset($_SESSION['user_id'])) {
             if ($notification && !$notification['is_read']) {
                 $stmt = $pdo->prepare("UPDATE notifications SET is_read = 1 WHERE id = ? AND user_id = ?");
                 $stmt->execute([$notification_id, $user_id]);
-                header('Location: ' . $_SERVER['REQUEST_URI']);
-                exit;
             }
         }
     }
+
+    // Lấy số lượng thông báo chưa đọc
+    $stmt = $pdo->prepare("SELECT COUNT(*) FROM notifications WHERE user_id = ? AND is_read = 0");
+    $stmt->execute([$user_id]);
+    $unread_notifications_count = $stmt->fetchColumn();
+
+    // Lấy số lượng tin nhắn chưa đọc (type = 'new_message_conversation')
+    $stmt = $pdo->prepare("SELECT COUNT(*) FROM notifications WHERE user_id = ? AND type = 'new_message_conversation' AND is_read = 0");
+    $stmt->execute([$user_id]);
+    $unread_messages_count = $stmt->fetchColumn();
+
+    // Lấy danh sách thông báo
+    $stmt = $pdo->prepare("SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 5");
+    $stmt->execute([$user_id]);
+    $notifications = $stmt->fetchAll(PDO::FETCH_ASSOC);
 }
 
 // Lấy tên file hiện tại từ URL để làm nổi bật mục active
@@ -354,6 +358,10 @@ $current_page = basename(parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH));
                             <?php endif; ?>
                         </button>
                         <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="notificationDropdown">
+                            <li class="dropdown-item text-muted">
+                                Tin nhắn chưa đọc: <?php echo $unread_messages_count; ?>
+                            </li>
+                            <li><hr class="dropdown-divider"></li>
                             <?php if (empty($notifications)): ?>
                                 <li><a class="dropdown-item text-muted" href="#">Không có thông báo</a></li>
                             <?php else: ?>
@@ -430,6 +438,11 @@ $current_page = basename(parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH));
             <?php elseif (isset($_SESSION['account_type']) && $_SESSION['account_type'] === 'owner'): ?>
                 <!-- Chủ sân -->
                 <li class="nav-item">
+                    <a class="nav-link <?php echo $current_page == 'manage_bookings.php' ? 'active' : ''; ?>" href="/football_booking/manage_bookings.php">
+                        <i class="bi bi-calendar-check"></i> Quản lý đặt sân
+                    </a>
+                </li>
+                <li class="nav-item">
                     <a class="nav-link <?php echo $current_page == 'history.php' ? 'active' : ''; ?>" href="/football_booking/history.php">
                         <i class="bi bi-clock-history"></i> Lịch sử đặt sân
                     </a>
@@ -447,11 +460,6 @@ $current_page = basename(parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH));
                 <li class="nav-item">
                     <a class="nav-link <?php echo $current_page == 'manage_products.php' ? 'active' : ''; ?>" href="/football_booking/manage_products.php">
                         <i class="bi bi-box"></i> Quản lý sản phẩm
-                    </a>
-                </li>
-                <li class="nav-item">
-                    <a class="nav-link <?php echo $current_page == 'manage_bookings.php' ? 'active' : ''; ?>" href="/football_booking/manage_bookings.php">
-                        <i class="bi bi-calendar-check"></i> Quản lý đặt sân
                     </a>
                 </li>
                 <li class="nav-item">

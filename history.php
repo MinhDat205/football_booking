@@ -111,8 +111,26 @@ if ($account_type === 'customer') {
                                 <td><?php echo htmlspecialchars($booking['end_time']); ?></td>
                                 <td class="total-price"><?php echo number_format($booking['total_price'], 0, ',', '.') . ' VND'; ?></td>
                                 <td>
-                                    <span class="badge <?php echo $booking['status'] === 'pending' ? 'bg-warning' : ($booking['status'] === 'confirmed' ? 'bg-success' : ($booking['status'] === 'cancelled' ? 'bg-danger' : 'bg-secondary')); ?>">
-                                        <?php echo htmlspecialchars($booking['status']); ?>
+                                    <span class="badge <?php echo $booking['status'] === 'pending' ? 'bg-warning' : ($booking['status'] === 'confirmed' ? 'bg-success' : ($booking['status'] === 'completed' ? 'bg-info' : 'bg-danger')); ?>">
+                                        <?php 
+                                        // Thay đổi văn bản hiển thị của trạng thái
+                                        switch ($booking['status']) {
+                                            case 'pending':
+                                                echo 'Chờ xác nhận';
+                                                break;
+                                            case 'confirmed':
+                                                echo 'Đã xác nhận';
+                                                break;
+                                            case 'completed':
+                                                echo 'Đã hoàn thành';
+                                                break;
+                                            case 'cancelled':
+                                                echo 'Đã hủy';
+                                                break;
+                                            default:
+                                                echo htmlspecialchars($booking['status']);
+                                        }
+                                        ?>
                                     </span>
                                 </td>
                             </tr>

@@ -19,7 +19,7 @@ if (!isset($_SESSION['user_id']) || $_SESSION['account_type'] !== 'owner') {
 $user_id = $_SESSION['user_id'];
 $csrf_token = generateCsrfToken();
 
-// Xử lý xác nhận hoặc hủy đặt sân trước khi xuất bất kỳ dữ liệu nào
+// Xử lý xác nhận, hủy, hoặc hoàn thành đặt sân trước khi xuất bất kỳ dữ liệu nào
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $token = isset($_POST['csrf_token']) ? $_POST['csrf_token'] : '';
     $error = '';
@@ -27,41 +27,119 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!verifyCsrfToken($token)) {
         $error = 'Yêu cầu không hợp lệ. Vui lòng thử lại.';
     } else {
-        $booking_id = (int)$_POST['booking_id'];
-        $action = $_POST['action'];
+        if (isset($_POST['send_message'])) {
+            // Xử lý gửi tin nhắn
+            $receiver_id = (int)$_POST['receiver_id'];
+            $message = trim($_POST['message']);
+            $booking_id = (int)$_POST['booking_id'];
 
-        // Kiểm tra xem đặt sân có thuộc về sân bóng của chủ sân không
-        $stmt = $pdo->prepare("SELECT b.* FROM bookings b 
-                               JOIN fields f ON b.field_id = f.id 
-                               WHERE b.id = ? AND f.owner_id = ?");
-        $stmt->execute([$booking_id, $user_id]);
-        $booking = $stmt->fetch(PDO::FETCH_ASSOC);
-
-        if (!$booking) {
-            $error = 'Đặt sân không hợp lệ hoặc không thuộc quyền quản lý của bạn.';
-        } else {
-            if ($action === 'confirm') {
-                $stmt = $pdo->prepare("UPDATE bookings SET status = 'confirmed' WHERE id = ?");
-                $stmt->execute([$booking_id]);
-
-                // Gửi thông báo cho khách hàng
-                $notification_message = "Yêu cầu đặt sân của bạn (ID #$booking_id) đã được xác nhận.";
-                $stmt = $pdo->prepare("INSERT INTO notifications (user_id, message, type, related_id) VALUES (?, ?, 'booking_confirmed', ?)");
-                $stmt->execute([$booking['user_id'], $notification_message, $booking_id]);
-
-                $success = "Đã xác nhận đặt sân.";
-            } elseif ($action === 'cancel') {
-                $stmt = $pdo->prepare("UPDATE bookings SET status = 'cancelled' WHERE id = ?");
-                $stmt->execute([$booking_id]);
-
-                // Gửi thông báo cho khách hàng
-                $notification_message = "Yêu cầu đặt sân của bạn (ID #$booking_id) đã bị hủy.";
-                $stmt = $pdo->prepare("INSERT INTO notifications (user_id, message, type, related_id) VALUES (?, ?, 'booking_confirmed', ?)");
-                $stmt->execute([$booking['user_id'], $notification_message, $booking_id]);
-
-                $success = "Đã hủy đặt sân.";
+            if (empty($message)) {
+                $error = 'Vui lòng nhập nội dung tin nhắn.';
+            } elseif (strlen($message) > 1000) {
+                $error = 'Tin nhắn không được vượt quá 1000 ký tự.';
             } else {
-                $error = 'Hành động không hợp lệ.';
+                // Kiểm tra xem cuộc trò chuyện đã tồn tại chưa
+                $stmt = $pdo->prepare("SELECT id FROM conversations WHERE user_id = ? AND owner_id = ?");
+                $stmt->execute([$receiver_id, $user_id]);
+                $conversation = $stmt->fetch(PDO::FETCH_ASSOC);
+
+                if (!$conversation) {
+                    // Tạo cuộc trò chuyện mới nếu chưa tồn tại
+                    $stmt = $pdo->prepare("INSERT INTO conversations (user_id, owner_id) VALUES (?, ?)");
+                    $stmt->execute([$receiver_id, $user_id]);
+                    $conversation_id = $pdo->lastInsertId();
+                } else {
+                    $conversation_id = $conversation['id'];
+                }
+
+                // Lưu tin nhắn
+                $stmt = $pdo->prepare("INSERT INTO messages (conversation_id, sender_id, receiver_id, message) VALUES (?, ?, ?, ?)");
+                $stmt->execute([$conversation_id, $user_id, $receiver_id, $message]);
+                $message_id = $pdo->lastInsertId();
+
+                // Gửi thông báo
+                $stmt = $pdo->prepare("SELECT f.name FROM fields f JOIN bookings b ON b.field_id = f.id WHERE b.id = ?");
+                $stmt->execute([$booking_id]);
+                $field_name = $stmt->fetchColumn();
+                $notification_message = "Bạn có tin nhắn mới từ chủ sân liên quan đến sân bóng " . $field_name;
+                $stmt = $pdo->prepare("INSERT INTO notifications (user_id, message, type, related_id, is_read) VALUES (?, ?, 'new_message_conversation', ?, 0)");
+                $stmt->execute([$receiver_id, $notification_message, $message_id]);
+
+                $success = 'Tin nhắn đã được gửi!';
+            }
+        } else {
+            // Xử lý xác nhận hoặc hủy đặt sân
+            $booking_id = (int)$_POST['booking_id'];
+            $action = $_POST['action'];
+
+            // Kiểm tra xem đặt sân có thuộc về sân bóng của chủ sân không
+            $stmt = $pdo->prepare("SELECT b.*, f.name as field_name FROM bookings b 
+                                   JOIN fields f ON b.field_id = f.id 
+                                   WHERE b.id = ? AND f.owner_id = ?");
+            $stmt->execute([$booking_id, $user_id]);
+            $booking = $stmt->fetch(PDO::FETCH_ASSOC);
+
+            if (!$booking) {
+                $error = 'Đặt sân không hợp lệ hoặc không thuộc quyền quản lý của bạn.';
+            } else {
+                try {
+                    if ($action === 'confirm') {
+                        $stmt = $pdo->prepare("UPDATE bookings SET status = 'confirmed' WHERE id = ?");
+                        $stmt->execute([$booking_id]);
+
+                        // Gửi thông báo cho khách hàng
+                        $notification_message = "Yêu cầu đặt sân của bạn (ID #$booking_id) đã được xác nhận.";
+                        $stmt = $pdo->prepare("INSERT INTO notifications (user_id, message, type, related_id, is_read) VALUES (?, ?, 'booking_confirmed', ?, 0)");
+                        $stmt->execute([$booking['user_id'], $notification_message, $booking_id]);
+
+                        $success = "Đã xác nhận đặt sân.";
+                    } elseif ($action === 'cancel') {
+                        $stmt = $pdo->prepare("UPDATE bookings SET status = 'cancelled' WHERE id = ?");
+                        $stmt->execute([$booking_id]);
+
+                        // Gửi thông báo cho khách hàng
+                        $notification_message = "Yêu cầu đặt sân của bạn (ID #$booking_id) đã bị hủy.";
+                        $stmt = $pdo->prepare("INSERT INTO notifications (user_id, message, type, related_id, is_read) VALUES (?, ?, 'booking_confirmed', ?, 0)");
+                        $stmt->execute([$booking['user_id'], $notification_message, $booking_id]);
+
+                        $success = "Đã hủy đặt sân.";
+                    } elseif ($action === 'complete') {
+                        // Kiểm tra xem đặt sân có đang ở trạng thái confirmed không
+                        if ($booking['status'] !== 'confirmed') {
+                            $error = 'Chỉ có thể hoàn thành các đặt sân đã được xác nhận.';
+                        } else {
+                            // Tính tổng thu nhập bao gồm cả sản phẩm đi kèm (nhân với số lượng)
+                            $total_revenue = $booking['total_price'];
+                            $products = json_decode($booking['selected_products'], true);
+                            if (!empty($products)) {
+                                foreach ($products as $product) {
+                                    $total_revenue += $product['price'] * $product['quantity'];
+                                }
+                            }
+
+                            // Cập nhật trạng thái thành completed
+                            $stmt = $pdo->prepare("UPDATE bookings SET status = 'completed' WHERE id = ?");
+                            $stmt->execute([$booking_id]);
+
+                            // Ghi nhận thu nhập vào bảng revenues, bao gồm cả giá sản phẩm
+                            $stmt = $pdo->prepare("INSERT INTO revenues (owner_id, booking_id, field_id, amount) VALUES (?, ?, ?, ?)");
+                            $stmt->execute([$user_id, $booking_id, $booking['field_id'], $total_revenue]);
+
+                            // Gửi thông báo cho khách hàng
+                            $notification_message = "Đặt sân của bạn (ID #$booking_id) đã hoàn thành.";
+                            $stmt = $pdo->prepare("INSERT INTO notifications (user_id, message, type, related_id, is_read) VALUES (?, ?, 'booking_completed', ?, 0)");
+                            $stmt->execute([$booking['user_id'], $notification_message, $booking_id]);
+
+                            $success = "Đã xác nhận hoàn thành đặt sân.";
+                        }
+                    } else {
+                        $error = 'Hành động không hợp lệ.';
+                    }
+                } catch (PDOException $e) {
+                    // Ghi log lỗi và hiển thị thông báo
+                    error_log("Error in manage_bookings.php: " . $e->getMessage());
+                    $error = "Có lỗi xảy ra khi xử lý đặt sân: " . $e->getMessage();
+                }
             }
         }
     }
@@ -76,12 +154,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     exit;
 }
 
-// Lấy danh sách đặt sân của sân bóng thuộc chủ sân
-$stmt = $pdo->prepare("SELECT b.*, f.name as field_name, u.full_name as customer_name 
+// Lấy danh sách đặt sân của sân bóng thuộc chủ sân, chỉ lấy trạng thái pending và confirmed
+$stmt = $pdo->prepare("SELECT b.*, f.name as field_name, u.full_name as customer_name, u.id as customer_id 
                        FROM bookings b 
                        JOIN fields f ON b.field_id = f.id 
                        JOIN users u ON b.user_id = u.id 
-                       WHERE f.owner_id = ? 
+                       WHERE f.owner_id = ? AND b.status IN ('pending', 'confirmed') 
                        ORDER BY b.created_at DESC");
 $stmt->execute([$user_id]);
 $bookings = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -137,11 +215,62 @@ require_once 'includes/header.php';
     .booking-table .btn-primary:hover {
         background-color: #218838;
     }
+    .booking-table .btn-info {
+        background-color: #17a2b8;
+    }
+    .booking-table .btn-info:hover {
+        background-color: #138496;
+    }
     .booking-table .btn-danger {
         background-color: #e74c3c;
     }
     .booking-table .btn-danger:hover {
         background-color: #c0392b;
+    }
+    /* Modal chat */
+    .modal-body {
+        padding: 20px;
+    }
+    .modal-title {
+        font-size: 1.8rem;
+        margin-bottom: 1rem;
+        color: #1e3c72;
+    }
+    .chat-box {
+        border-radius: 5px;
+        max-height: 400px;
+        overflow-y: auto;
+    }
+    .chat-box .message {
+        margin-bottom: 12px;
+    }
+    .chat-box .message p {
+        border-radius: 5px;
+        padding: 10px 14px;
+        font-size: 1rem;
+    }
+    .chat-box .message.text-end p {
+        background-color: #2a5298;
+        color: #fff;
+    }
+    .chat-box .message:not(.text-end) p {
+        background-color: #e6f0ff;
+        color: #333;
+    }
+    .chat-box .message small {
+        font-size: 0.85rem;
+    }
+    .chat-form textarea {
+        border-radius: 5px;
+        border: 1px solid #e0e4e9;
+        font-size: 1rem;
+    }
+    .chat-form textarea:focus {
+        border-color: #2a5298;
+    }
+    .chat-form .btn-primary {
+        padding: 8px 20px;
+        font-size: 1rem;
     }
     /* Responsive */
     @media (max-width: 768px) {
@@ -157,6 +286,28 @@ require_once 'includes/header.php';
             font-size: 0.9rem;
         }
         .booking-table .btn {
+            padding: 6px 15px;
+            font-size: 0.9rem;
+        }
+        .modal-body {
+            padding: 15px;
+        }
+        .modal-title {
+            font-size: 1.4rem;
+        }
+        .chat-box {
+            max-height: 300px;
+        }
+        .chat-box .message p {
+            font-size: 0.9rem;
+        }
+        .chat-box .message small {
+            font-size: 0.75rem;
+        }
+        .chat-form textarea {
+            font-size: 0.9rem;
+        }
+        .chat-form .btn-primary {
             padding: 6px 15px;
             font-size: 0.9rem;
         }
@@ -195,6 +346,7 @@ require_once 'includes/header.php';
                             <th>Ngày đặt</th>
                             <th>Khung giờ</th>
                             <th>Tổng giá</th>
+                            <th>Sản phẩm đi kèm</th>
                             <th>Trạng thái</th>
                             <th>Hành động</th>
                         </tr>
@@ -207,33 +359,141 @@ require_once 'includes/header.php';
                                 <td><?php echo htmlspecialchars($booking['customer_name']); ?></td>
                                 <td><?php echo htmlspecialchars($booking['booking_date']); ?></td>
                                 <td><?php echo htmlspecialchars($booking['start_time'] . ' - ' . $booking['end_time']); ?></td>
-                                <td class="price"><?php echo number_format($booking['total_price'], 0, ',', '.') . ' VND'; ?></td>
+                                <td class="price">
+                                    <?php
+                                    $total_price = $booking['total_price'];
+                                    $products = json_decode($booking['selected_products'], true);
+                                    if (!empty($products)) {
+                                        foreach ($products as $product) {
+                                            $total_price += $product['price'] * $product['quantity'];
+                                        }
+                                    }
+                                    echo number_format($total_price, 0, ',', '.') . ' VND';
+                                    ?>
+                                </td>
                                 <td>
-                                    <span class="badge <?php echo $booking['status'] === 'pending' ? 'bg-warning' : ($booking['status'] === 'confirmed' ? 'bg-success' : 'bg-danger'); ?> status-badge">
-                                        <?php echo htmlspecialchars($booking['status']); ?>
+                                    <?php
+                                    if (!empty($products)) {
+                                        foreach ($products as $product) {
+                                            echo htmlspecialchars($product['name']) . ' (' . number_format($product['price'], 0, ',', '.') . ' VND x ' . $product['quantity'] . ')<br>';
+                                        }
+                                    } else {
+                                        echo 'Không có sản phẩm đi kèm.';
+                                    }
+                                    ?>
+                                </td>
+                                <td>
+                                    <span class="badge <?php echo $booking['status'] === 'pending' ? 'bg-warning' : 'bg-success'; ?> status-badge">
+                                        <?php 
+                                        // Thay đổi văn bản hiển thị của trạng thái
+                                        switch ($booking['status']) {
+                                            case 'pending':
+                                                echo 'Chờ xác nhận';
+                                                break;
+                                            case 'confirmed':
+                                                echo 'Đã xác nhận';
+                                                break;
+                                            default:
+                                                echo htmlspecialchars($booking['status']);
+                                        }
+                                        ?>
                                     </span>
                                 </td>
                                 <td>
-                                    <?php if ($booking['status'] === 'pending'): ?>
-                                        <form method="POST" style="display:inline;">
-                                            <input type="hidden" name="booking_id" value="<?php echo $booking['id']; ?>">
-                                            <input type="hidden" name="action" value="confirm">
-                                            <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($csrf_token); ?>">
-                                            <button type="submit" class="btn btn-primary btn-sm d-flex align-items-center gap-1">
-                                                <i class="bi bi-check-circle"></i> Xác nhận
-                                            </button>
-                                        </form>
-                                        <form method="POST" style="display:inline;">
-                                            <input type="hidden" name="booking_id" value="<?php echo $booking['id']; ?>">
-                                            <input type="hidden" name="action" value="cancel">
-                                            <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($csrf_token); ?>">
-                                            <button type="submit" class="btn btn-danger btn-sm d-flex align-items-center gap-1">
-                                                <i class="bi bi-x-circle"></i> Hủy
-                                            </button>
-                                        </form>
-                                    <?php endif; ?>
+                                    <div class="d-flex gap-2">
+                                        <?php if ($booking['status'] === 'pending'): ?>
+                                            <form method="POST" style="display:inline;">
+                                                <input type="hidden" name="booking_id" value="<?php echo $booking['id']; ?>">
+                                                <input type="hidden" name="action" value="confirm">
+                                                <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($csrf_token); ?>">
+                                                <button type="submit" class="btn btn-primary btn-sm d-flex align-items-center gap-1">
+                                                    <i class="bi bi-check-circle"></i> Xác nhận
+                                                </button>
+                                            </form>
+                                            <form method="POST" style="display:inline;">
+                                                <input type="hidden" name="booking_id" value="<?php echo $booking['id']; ?>">
+                                                <input type="hidden" name="action" value="cancel">
+                                                <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($csrf_token); ?>">
+                                                <button type="submit" class="btn btn-danger btn-sm d-flex align-items-center gap-1">
+                                                    <i class="bi bi-x-circle"></i> Hủy
+                                                </button>
+                                            </form>
+                                        <?php elseif ($booking['status'] === 'confirmed'): ?>
+                                            <form method="POST" style="display:inline;">
+                                                <input type="hidden" name="booking_id" value="<?php echo $booking['id']; ?>">
+                                                <input type="hidden" name="action" value="complete">
+                                                <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($csrf_token); ?>">
+                                                <button type="submit" class="btn btn-success btn-sm d-flex align-items-center gap-1">
+                                                    <i class="bi bi-check-circle"></i> Hoàn thành
+                                                </button>
+                                            </form>
+                                        <?php endif; ?>
+                                        <button class="btn btn-info btn-sm d-flex align-items-center gap-1" data-bs-toggle="modal" data-bs-target="#chatModal<?php echo $booking['id']; ?>">
+                                            <i class="bi bi-chat-dots-fill"></i> Chat
+                                        </button>
+                                    </div>
                                 </td>
                             </tr>
+
+                            <!-- Modal chat -->
+                            <div class="modal fade" id="chatModal<?php echo $booking['id']; ?>" tabindex="-1" aria-labelledby="chatModalLabel<?php echo $booking['id']; ?>" aria-hidden="true">
+                                <div class="modal-dialog">
+                                    <div class="modal-content">
+                                        <div class="modal-header">
+                                            <h5 class="modal-title" id="chatModalLabel<?php echo $booking['id']; ?>">
+                                                Chat với <?php echo htmlspecialchars($booking['customer_name']); ?>
+                                            </h5>
+                                            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                                        </div>
+                                        <div class="modal-body">
+                                            <!-- Hiển thị tin nhắn -->
+                                            <?php
+                                            // Kiểm tra xem cuộc trò chuyện đã tồn tại chưa
+                                            $stmt = $pdo->prepare("SELECT id FROM conversations WHERE user_id = ? AND owner_id = ?");
+                                            $stmt->execute([$booking['customer_id'], $user_id]);
+                                            $conversation = $stmt->fetch(PDO::FETCH_ASSOC);
+                                            $conversation_id = $conversation ? $conversation['id'] : null;
+
+                                            $messages = [];
+                                            if ($conversation_id) {
+                                                $stmt = $pdo->prepare("SELECT m.*, u.full_name AS sender_name 
+                                                                       FROM messages m 
+                                                                       JOIN users u ON m.sender_id = u.id 
+                                                                       WHERE m.conversation_id = ? 
+                                                                       ORDER BY m.created_at ASC");
+                                                $stmt->execute([$conversation_id]);
+                                                $messages = $stmt->fetchAll(PDO::FETCH_ASSOC);
+                                            }
+                                            ?>
+                                            <div class="chat-box">
+                                                <?php if (empty($messages)): ?>
+                                                    <p class="text-muted">Chưa có tin nhắn nào.</p>
+                                                <?php else: ?>
+                                                    <?php foreach ($messages as $message): ?>
+                                                        <div class="message mb-3 <?php echo $message['sender_id'] == $user_id ? 'text-end' : ''; ?>">
+                                                            <strong><?php echo htmlspecialchars($message['sender_name']); ?>:</strong>
+                                                            <p class="mb-1"><?php echo htmlspecialchars($message['message']); ?></p>
+                                                            <small class="text-muted d-block"><?php echo htmlspecialchars($message['created_at']); ?></small>
+                                                        </div>
+                                                    <?php endforeach; ?>
+                                                <?php endif; ?>
+                                            </div>
+                                            <!-- Form gửi tin nhắn -->
+                                            <form method="POST" class="mt-3 chat-form">
+                                                <div class="mb-3">
+                                                    <textarea name="message" class="form-control" rows="2" placeholder="Nhập tin nhắn..." maxlength="1000" required></textarea>
+                                                </div>
+                                                <input type="hidden" name="receiver_id" value="<?php echo $booking['customer_id']; ?>">
+                                                <input type="hidden" name="booking_id" value="<?php echo $booking['id']; ?>">
+                                                <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($csrf_token); ?>">
+                                                <button type="submit" name="send_message" class="btn btn-primary w-100 d-flex align-items-center justify-content-center gap-2">
+                                                    <i class="bi bi-send-fill"></i> Gửi
+                                                </button>
+                                            </form>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
                         <?php endforeach; ?>
                     </tbody>
                 </table>

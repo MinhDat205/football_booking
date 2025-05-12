@@ -1,4 +1,3 @@
--- Tạo cơ sở dữ liệu mới
 CREATE DATABASE football_booking;
 USE football_booking;
 
@@ -34,16 +33,13 @@ CREATE TABLE fields (
     price_per_hour DECIMAL(10, 2) NOT NULL,
     open_time TIME,
     close_time TIME,
-    image VARCHAR(255),
+    field_type ENUM('5', '7', '9', '11') NOT NULL DEFAULT '5',
     status ENUM('pending', 'approved', 'rejected') DEFAULT 'pending',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (owner_id) REFERENCES users(id)
 );
-ALTER TABLE fields
-ADD COLUMN field_type ENUM('5', '7', '9', '11') NOT NULL DEFAULT '5';
 
-ALTER TABLE fields
-DROP COLUMN image;
-
+-- Tạo bảng field_images
 CREATE TABLE field_images (
     id INT AUTO_INCREMENT PRIMARY KEY,
     field_id INT NOT NULL,
@@ -52,8 +48,17 @@ CREATE TABLE field_images (
     FOREIGN KEY (field_id) REFERENCES fields(id) ON DELETE CASCADE
 );
 
-ALTER TABLE fields
-ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
+-- Tạo bảng products
+CREATE TABLE products (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    field_id INT NOT NULL,
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    price DECIMAL(10, 2) NOT NULL,
+    image VARCHAR(255),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (field_id) REFERENCES fields(id)
+);
 
 -- Tạo bảng bookings
 CREATE TABLE bookings (
@@ -64,13 +69,14 @@ CREATE TABLE bookings (
     start_time TIME NOT NULL,
     end_time TIME NOT NULL,
     total_price DECIMAL(10, 2),
-    status ENUM('pending', 'confirmed', 'cancelled') DEFAULT 'pending',
+    status ENUM('pending', 'confirmed', 'cancelled', 'completed') DEFAULT 'pending',
+    selected_products JSON DEFAULT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id),
-    FOREIGN KEY (field_id) REFERENCES fields(id)
+    FOREIGN KEY (field_id) REFERENCES fields(id),
+    CONSTRAINT check_time CHECK (end_time > start_time),
+    CONSTRAINT unique_booking UNIQUE (field_id, booking_date, start_time, end_time)
 );
-ALTER TABLE bookings
-ADD COLUMN selected_products TEXT DEFAULT NULL;
 
 -- Tạo bảng reviews
 CREATE TABLE reviews (
@@ -81,7 +87,8 @@ CREATE TABLE reviews (
     comment TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id),
-    FOREIGN KEY (field_id) REFERENCES fields(id)
+    FOREIGN KEY (field_id) REFERENCES fields(id),
+    CONSTRAINT check_rating CHECK (rating >= 1 AND rating <= 5)
 );
 
 -- Tạo bảng support_requests
@@ -105,7 +112,7 @@ CREATE TABLE password_resets (
     INDEX(email)
 );
 
--- Tạo bảng conversations (mới, để hỗ trợ chức năng chat theo cặp người dùng)
+-- Tạo bảng conversations
 CREATE TABLE conversations (
     id INT AUTO_INCREMENT PRIMARY KEY,
     user_id INT NOT NULL,
@@ -117,7 +124,7 @@ CREATE TABLE conversations (
     FOREIGN KEY (owner_id) REFERENCES users(id)
 );
 
--- Tạo bảng messages (sử dụng conversation_id thay vì booking_id)
+-- Tạo bảng messages
 CREATE TABLE messages (
     id INT AUTO_INCREMENT PRIMARY KEY,
     conversation_id INT NOT NULL,
@@ -130,433 +137,518 @@ CREATE TABLE messages (
     FOREIGN KEY (receiver_id) REFERENCES users(id)
 );
 
--- Tạo bảng notifications (cập nhật type để hỗ trợ new_message_conversation)
+-- Tạo bảng notifications
 CREATE TABLE notifications (
     id INT AUTO_INCREMENT PRIMARY KEY,
     user_id INT NOT NULL,
     message TEXT NOT NULL,
     type ENUM('booking_confirmed', 'new_message', 'new_message_conversation') NOT NULL,
-    related_id INT NOT NULL, -- ID liên quan (booking_id hoặc message_id)
+    related_id INT NULL,
     is_read TINYINT(1) DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id)
 );
 
--- Tạo bảng products
-CREATE TABLE products (
+-- Tạo bảng revenues
+CREATE TABLE revenues (
     id INT AUTO_INCREMENT PRIMARY KEY,
+    owner_id INT NOT NULL,
+    booking_id INT NOT NULL,
     field_id INT NOT NULL,
-    name VARCHAR(255) NOT NULL,
-    description TEXT,
-    price DECIMAL(10, 2) NOT NULL,
-    image VARCHAR(255),
+    amount DECIMAL(10, 2) NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (field_id) REFERENCES fields(id)
+    FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (booking_id) REFERENCES bookings(id) ON DELETE CASCADE,
+    FOREIGN KEY (field_id) REFERENCES fields(id) ON DELETE CASCADE
 );
+
+-- Thêm các chỉ mục để tối ưu hiệu suất
+CREATE INDEX idx_user_id ON bookings(user_id);
+CREATE INDEX idx_field_id ON bookings(field_id);
+CREATE INDEX idx_booking_date ON bookings(booking_date);
+CREATE INDEX idx_user_id_reviews ON reviews(user_id);
+CREATE INDEX idx_field_id_reviews ON reviews(field_id);
+CREATE INDEX idx_conversation_id ON messages(conversation_id);
 
 -- Đặt lại id bắt đầu là 2
 ALTER TABLE users AUTO_INCREMENT = 2;
 
--- Tạo dữ liệu kiểm thử
--- 2. Thêm 10 chủ sân (owner1 -> owner10)
-INSERT INTO users (full_name, email, phone, password, account_type, status) VALUES
-('Owner 1', 'owner1@example.com', '0900000001', '$2y$10$ApJV.JRjbBPGBmzVlhpQZeqjZhG.Fzst8SsdiCrMC665ARf/UdzU.', 'owner', 'approved'),
-('Owner 2', 'owner2@example.com', '0900000002', '$2y$10$ApJV.JRjbBPGBmzVlhpQZeqjZhG.Fzst8SsdiCrMC665ARf/UdzU.', 'owner', 'approved'),
-('Owner 3', 'owner3@example.com', '0900000003', '$2y$10$ApJV.JRjbBPGBmzVlhpQZeqjZhG.Fzst8SsdiCrMC665ARf/UdzU.', 'owner', 'approved'),
-('Owner 4', 'owner4@example.com', '0900000004', '$2y$10$ApJV.JRjbBPGBmzVlhpQZeqjZhG.Fzst8SsdiCrMC665ARf/UdzU.', 'owner', 'approved'),
-('Owner 5', 'owner5@example.com', '0900000005', '$2y$10$ApJV.JRjbBPGBmzVlhpQZeqjZhG.Fzst8SsdiCrMC665ARf/UdzU.', 'owner', 'approved'),
-('Owner 6', 'owner6@example.com', '0900000006', '$2y$10$ApJV.JRjbBPGBmzVlhpQZeqjZhG.Fzst8SsdiCrMC665ARf/UdzU.', 'owner', 'approved'),
-('Owner 7', 'owner7@example.com', '0900000007', '$2y$10$ApJV.JRjbBPGBmzVlhpQZeqjZhG.Fzst8SsdiCrMC665ARf/UdzU.', 'owner', 'approved'),
-('Owner 8', 'owner8@example.com', '0900000008', '$2y$10$ApJV.JRjbBPGBmzVlhpQZeqjZhG.Fzst8SsdiCrMC665ARf/UdzU.', 'owner', 'approved'),
-('Owner 9', 'owner9@example.com', '0900000009', '$2y$10$ApJV.JRjbBPGBmzVlhpQZeqjZhG.Fzst8SsdiCrMC665ARf/UdzU.', 'owner', 'approved'),
-('Owner 10', 'owner10@example.com', '0900000010', '$2y$10$ApJV.JRjbBPGBmzVlhpQZeqjZhG.Fzst8SsdiCrMC665ARf/UdzU.', 'owner', 'approved');
+-- Chủ sân (ID 2-11)
+INSERT INTO users (id, full_name, email, phone, password, account_type, status, created_at)
+VALUES 
+(2, 'Chủ sân 1', 'owner1@example.com', '0912000001', '$2y$10$Zdek8oAz829KJNPf4tojLeZnoAKtgNekLzKJeWnz.WgY6KAQBIBwK', 'owner', 'approved', '2025-05-01 10:00:00'),
+(3, 'Chủ sân 2', 'owner2@example.com', '0912000002', '$2y$10$Zdek8oAz829KJNPf4tojLeZnoAKtgNekLzKJeWnz.WgY6KAQBIBwK', 'owner', 'approved', '2025-05-01 10:05:00'),
+(4, 'Chủ sân 3', 'owner3@example.com', '0912000003', '$2y$10$Zdek8oAz829KJNPf4tojLeZnoAKtgNekLzKJeWnz.WgY6KAQBIBwK', 'owner', 'approved', '2025-05-01 10:10:00'),
+(5, 'Chủ sân 4', 'owner4@example.com', '0912000004', '$2y$10$Zdek8oAz829KJNPf4tojLeZnoAKtgNekLzKJeWnz.WgY6KAQBIBwK', 'owner', 'approved', '2025-05-01 10:15:00'),
+(6, 'Chủ sân 5', 'owner5@example.com', '0912000005', '$2y$10$Zdek8oAz829KJNPf4tojLeZnoAKtgNekLzKJeWnz.WgY6KAQBIBwK', 'owner', 'approved', '2025-05-01 10:20:00'),
+(7, 'Chủ sân 6', 'owner6@example.com', '0912000006', '$2y$10$Zdek8oAz829KJNPf4tojLeZnoAKtgNekLzKJeWnz.WgY6KAQBIBwK', 'owner', 'approved', '2025-05-01 10:25:00'),
+(8, 'Chủ sân 7', 'owner7@example.com', '0912000007', '$2y$10$Zdek8oAz829KJNPf4tojLeZnoAKtgNekLzKJeWnz.WgY6KAQBIBwK', 'owner', 'approved', '2025-05-01 10:30:00'),
+(9, 'Chủ sân 8', 'owner8@example.com', '0912000008', '$2y$10$Zdek8oAz829KJNPf4tojLeZnoAKtgNekLzKJeWnz.WgY6KAQBIBwK', 'owner', 'approved', '2025-05-01 10:35:00'),
+(10, 'Chủ sân 9', 'owner9@example.com', '0912000009', '$2y$10$Zdek8oAz829KJNPf4tojLeZnoAKtgNekLzKJeWnz.WgY6KAQBIBwK', 'owner', 'approved', '2025-05-01 10:40:00'),
+(11, 'Chủ sân 10', 'owner10@example.com', '0912000010', '$2y$10$Zdek8oAz829KJNPf4tojLeZnoAKtgNekLzKJeWnz.WgY6KAQBIBwK', 'owner', 'approved', '2025-05-01 10:45:00');
 
--- 3. Thêm 20 khách hàng (customer1 -> customer20)
-INSERT INTO users (full_name, email, phone, password, account_type, status) VALUES
-('Customer 1', 'customer1@example.com', '0910000001', '$2y$10$ApJV.JRjbBPGBmzVlhpQZeqjZhG.Fzst8SsdiCrMC665ARf/UdzU.', 'customer', 'approved'),
-('Customer 2', 'customer2@example.com', '0910000002', '$2y$10$ApJV.JRjbBPGBmzVlhpQZeqjZhG.Fzst8SsdiCrMC665ARf/UdzU.', 'customer', 'approved'),
-('Customer 3', 'customer3@example.com', '0910000003', '$2y$10$ApJV.JRjbBPGBmzVlhpQZeqjZhG.Fzst8SsdiCrMC665ARf/UdzU.', 'customer', 'approved'),
-('Customer 4', 'customer4@example.com', '0910000004', '$2y$10$ApJV.JRjbBPGBmzVlhpQZeqjZhG.Fzst8SsdiCrMC665ARf/UdzU.', 'customer', 'approved'),
-('Customer 5', 'customer5@example.com', '0910000005', '$2y$10$ApJV.JRjbBPGBmzVlhpQZeqjZhG.Fzst8SsdiCrMC665ARf/UdzU.', 'customer', 'approved'),
-('Customer 6', 'customer6@example.com', '0910000006', '$2y$10$ApJV.JRjbBPGBmzVlhpQZeqjZhG.Fzst8SsdiCrMC665ARf/UdzU.', 'customer', 'approved'),
-('Customer 7', 'customer7@example.com', '0910000007', '$2y$10$ApJV.JRjbBPGBmzVlhpQZeqjZhG.Fzst8SsdiCrMC665ARf/UdzU.', 'customer', 'approved'),
-('Customer 8', 'customer8@example.com', '0910000008', '$2y$10$ApJV.JRjbBPGBmzVlhpQZeqjZhG.Fzst8SsdiCrMC665ARf/UdzU.', 'customer', 'approved'),
-('Customer 9', 'customer9@example.com', '0910000009', '$2y$10$ApJV.JRjbBPGBmzVlhpQZeqjZhG.Fzst8SsdiCrMC665ARf/UdzU.', 'customer', 'approved'),
-('Customer 10', 'customer10@example.com', '0910000010', '$2y$10$ApJV.JRjbBPGBmzVlhpQZeqjZhG.Fzst8SsdiCrMC665ARf/UdzU.', 'customer', 'approved'),
-('Customer 11', 'customer11@example.com', '0910000011', '$2y$10$ApJV.JRjbBPGBmzVlhpQZeqjZhG.Fzst8SsdiCrMC665ARf/UdzU.', 'customer', 'approved'),
-('Customer 12', 'customer12@example.com', '0910000012', '$2y$10$ApJV.JRjbBPGBmzVlhpQZeqjZhG.Fzst8SsdiCrMC665ARf/UdzU.', 'customer', 'approved'),
-('Customer 13', 'customer13@example.com', '0910000013', '$2y$10$ApJV.JRjbBPGBmzVlhpQZeqjZhG.Fzst8SsdiCrMC665ARf/UdzU.', 'customer', 'approved'),
-('Customer 14', 'customer14@example.com', '0910000014', '$2y$10$ApJV.JRjbBPGBmzVlhpQZeqjZhG.Fzst8SsdiCrMC665ARf/UdzU.', 'customer', 'approved'),
-('Customer 15', 'customer15@example.com', '0910000015', '$2y$10$ApJV.JRjbBPGBmzVlhpQZeqjZhG.Fzst8SsdiCrMC665ARf/UdzU.', 'customer', 'approved'),
-('Customer 16', 'customer16@example.com', '0910000016', '$2y$10$ApJV.JRjbBPGBmzVlhpQZeqjZhG.Fzst8SsdiCrMC665ARf/UdzU.', 'customer', 'approved'),
-('Customer 17', 'customer17@example.com', '0910000017', '$2y$10$ApJV.JRjbBPGBmzVlhpQZeqjZhG.Fzst8SsdiCrMC665ARf/UdzU.', 'customer', 'approved'),
-('Customer 18', 'customer18@example.com', '0910000018', '$2y$10$ApJV.JRjbBPGBmzVlhpQZeqjZhG.Fzst8SsdiCrMC665ARf/UdzU.', 'customer', 'approved'),
-('Customer 19', 'customer19@example.com', '0910000019', '$2y$10$ApJV.JRjbBPGBmzVlhpQZeqjZhG.Fzst8SsdiCrMC665ARf/UdzU.', 'customer', 'approved'),
-('Customer 20', 'customer20@example.com', '0910000020', '$2y$10$ApJV.JRjbBPGBmzVlhpQZeqjZhG.Fzst8SsdiCrMC665ARf/UdzU.', 'customer', 'approved');
+-- Khách hàng (ID 12-31)
+INSERT INTO users (id, full_name, email, phone, password, account_type, status, created_at)
+VALUES 
+(12, 'Khách hàng 1', 'customer1@example.com', '0922000001', '$2y$10$Zdek8oAz829KJNPf4tojLeZnoAKtgNekLzKJeWnz.WgY6KAQBIBwK', 'customer', 'approved', '2025-05-02 09:00:00'),
+(13, 'Khách hàng 2', 'customer2@example.com', '0922000002', '$2y$10$Zdek8oAz829KJNPf4tojLeZnoAKtgNekLzKJeWnz.WgY6KAQBIBwK', 'customer', 'approved', '2025-05-02 09:05:00'),
+(14, 'Khách hàng 3', 'customer3@example.com', '0922000003', '$2y$10$Zdek8oAz829KJNPf4tojLeZnoAKtgNekLzKJeWnz.WgY6KAQBIBwK', 'customer', 'approved', '2025-05-02 09:10:00'),
+(15, 'Khách hàng 4', 'customer4@example.com', '0922000004', '$2y$10$Zdek8oAz829KJNPf4tojLeZnoAKtgNekLzKJeWnz.WgY6KAQBIBwK', 'customer', 'approved', '2025-05-02 09:15:00'),
+(16, 'Khách hàng 5', 'customer5@example.com', '0922000005', '$2y$10$Zdek8oAz829KJNPf4tojLeZnoAKtgNekLzKJeWnz.WgY6KAQBIBwK', 'customer', 'approved', '2025-05-02 09:20:00'),
+(17, 'Khách hàng 6', 'customer6@example.com', '0922000006', '$2y$10$Zdek8oAz829KJNPf4tojLeZnoAKtgNekLzKJeWnz.WgY6KAQBIBwK', 'customer', 'approved', '2025-05-02 09:25:00'),
+(18, 'Khách hàng 7', 'customer7@example.com', '0922000007', '$2y$10$Zdek8oAz829KJNPf4tojLeZnoAKtgNekLzKJeWnz.WgY6KAQBIBwK', 'customer', 'approved', '2025-05-02 09:30:00'),
+(19, 'Khách hàng 8', 'customer8@example.com', '0922000008', '$2y$10$Zdek8oAz829KJNPf4tojLeZnoAKtgNekLzKJeWnz.WgY6KAQBIBwK', 'customer', 'approved', '2025-05-02 09:35:00'),
+(20, 'Khách hàng 9', 'customer9@example.com', '0922000009', '$2y$10$Zdek8oAz829KJNPf4tojLeZnoAKtgNekLzKJeWnz.WgY6KAQBIBwK', 'customer', 'approved', '2025-05-02 09:40:00'),
+(21, 'Khách hàng 10', 'customer10@example.com', '0922000010', '$2y$10$Zdek8oAz829KJNPf4tojLeZnoAKtgNekLzKJeWnz.WgY6KAQBIBwK', 'customer', 'approved', '2025-05-02 09:45:00'),
+(22, 'Khách hàng 11', 'customer11@example.com', '0922000011', '$2y$10$Zdek8oAz829KJNPf4tojLeZnoAKtgNekLzKJeWnz.WgY6KAQBIBwK', 'customer', 'approved', '2025-05-02 09:50:00'),
+(23, 'Khách hàng 12', 'customer12@example.com', '0922000012', '$2y$10$Zdek8oAz829KJNPf4tojLeZnoAKtgNekLzKJeWnz.WgY6KAQBIBwK', 'customer', 'approved', '2025-05-02 09:55:00'),
+(24, 'Khách hàng 13', 'customer13@example.com', '0922000013', '$2y$10$Zdek8oAz829KJNPf4tojLeZnoAKtgNekLzKJeWnz.WgY6KAQBIBwK', 'customer', 'approved', '2025-05-02 10:00:00'),
+(25, 'Khách hàng 14', 'customer14@example.com', '0922000014', '$2y$10$Zdek8oAz829KJNPf4tojLeZnoAKtgNekLzKJeWnz.WgY6KAQBIBwK', 'customer', 'approved', '2025-05-02 10:05:00'),
+(26, 'Khách hàng 15', 'customer15@example.com', '0922000015', '$2y$10$Zdek8oAz829KJNPf4tojLeZnoAKtgNekLzKJeWnz.WgY6KAQBIBwK', 'customer', 'approved', '2025-05-02 10:10:00'),
+(27, 'Khách hàng 16', 'customer16@example.com', '0922000016', '$2y$10$Zdek8oAz829KJNPf4tojLeZnoAKtgNekLzKJeWnz.WgY6KAQBIBwK', 'customer', 'approved', '2025-05-02 10:15:00'),
+(28, 'Khách hàng 17', 'customer17@example.com', '0922000017', '$2y$10$Zdek8oAz829KJNPf4tojLeZnoAKtgNekLzKJeWnz.WgY6KAQBIBwK', 'customer', 'approved', '2025-05-02 10:20:00'),
+(29, 'Khách hàng 18', 'customer18@example.com', '0922000018', '$2y$10$Zdek8oAz829KJNPf4tojLeZnoAKtgNekLzKJeWnz.WgY6KAQBIBwK', 'customer', 'approved', '2025-05-02 10:25:00'),
+(30, 'Khách hàng 19', 'customer19@example.com', '0922000019', '$2y$10$Zdek8oAz829KJNPf4tojLeZnoAKtgNekLzKJeWnz.WgY6KAQBIBwK', 'customer', 'approved', '2025-05-02 10:30:00'),
+(31, 'Khách hàng 20', 'customer20@example.com', '0922000020', '$2y$10$Zdek8oAz829KJNPf4tojLeZnoAKtgNekLzKJeWnz.WgY6KAQBIBwK', 'customer', 'approved', '2025-05-02 10:35:00');
 
--- 4. Thêm 10 sân bóng (mỗi chủ sân sở hữu 1 sân, địa chỉ tại Hà Nội, Đà Nẵng, hoặc TP.HCM, với created_at)
-INSERT INTO fields (owner_id, name, address, price_per_hour, open_time, close_time, image, status, created_at) VALUES
-(2, 'Field 1', '123 Cầu Giấy, Hà Nội', 100000, '07:00:00', '23:00:00', 'field_1.jpg', 'approved', '2025-05-01 10:00:00'),
-(3, 'Field 2', '456 Ba Đình, Hà Nội', 150000, '07:00:00', '23:00:00', 'field_2.jpg', 'approved', '2025-05-02 10:00:00'),
-(4, 'Field 3', '789 Hải Châu, Đà Nẵng', 200000, '07:00:00', '23:00:00', 'field_3.jpg', 'approved', '2025-05-03 10:00:00'),
-(5, 'Field 4', '101 Nguyễn Văn Cừ, Đà Nẵng', 250000, '07:00:00', '23:00:00', 'field_4.jpg', 'approved', '2025-05-04 10:00:00'),
-(6, 'Field 5', '321 Quận 1, TP. Hồ Chí Minh', 300000, '07:00:00', '23:00:00', 'field_5.jpg', 'approved', '2025-05-05 10:00:00'),
-(7, 'Field 6', '654 Quận 7, TP. Hồ Chí Minh', 350000, '07:00:00', '23:00:00', 'field_6.jpg', 'approved', '2025-05-06 10:00:00'),
-(8, 'Field 7', '987 Đống Đa, Hà Nội', 400000, '07:00:00', '23:00:00', 'field_7.jpg', 'approved', '2025-05-07 10:00:00'),
-(9, 'Field 8', '147 Thanh Khê, Đà Nẵng', 450000, '07:00:00', '23:00:00', 'field_8.jpg', 'approved', '2025-05-08 10:00:00'),
-(10, 'Field 9', '258 Quận 3, TP. Hồ Chí Minh', 500000, '07:00:00', '23:00:00', 'field_9.jpg', 'approved', '2025-05-09 10:00:00'),
-(11, 'Field 10', '369 Thủ Đức, TP. Hồ Chí Minh', 550000, '07:00:00', '23:00:00', 'field_10.jpg', 'approved', '2025-05-10 10:00:00');
+INSERT INTO fields (id, owner_id, name, address, price_per_hour, open_time, close_time, field_type, status, created_at)
+VALUES 
+(1, 2, 'Sân bóng A1', '123 Nguyễn Trãi, Hà Nội', 300000, '08:00:00', '22:00:00', '5', 'approved', '2025-05-03 08:00:00'),
+(2, 3, 'Sân bóng A2', '456 Lê Lợi, Hà Nội', 350000, '09:00:00', '23:00:00', '7', 'approved', '2025-05-03 08:05:00'),
+(3, 4, 'Sân bóng B1', '789 Trần Phú, Hà Nội', 400000, '07:00:00', '21:00:00', '9', 'approved', '2025-05-03 08:10:00'),
+(4, 5, 'Sân bóng C1', '101 Nguyễn Huệ, Thành phố Hồ Chí Minh', 320000, '08:00:00', '22:00:00', '5', 'approved', '2025-05-03 08:15:00'),
+(5, 6, 'Sân bóng C2', '202 Lê Lai, Thành phố Hồ Chí Minh', 370000, '09:00:00', '23:00:00', '7', 'approved', '2025-05-03 08:20:00'),
+(6, 7, 'Sân bóng D1', '303 Phạm Văn Đồng, Thành phố Hồ Chí Minh', 410000, '07:00:00', '21:00:00', '11', 'approved', '2025-05-03 08:25:00'),
+(7, 8, 'Sân bóng E1', '404 Nguyễn Thị Minh Khai, Đà Nẵng', 310000, '08:00:00', '22:00:00', '5', 'approved', '2025-05-03 08:30:00'),
+(8, 9, 'Sân bóng E2', '505 Hàn Thuyên, Đà Nẵng', 360000, '09:00:00', '23:00:00', '7', 'approved', '2025-05-03 08:35:00'),
+(9, 10, 'Sân bóng F1', '606 Nguyễn Văn Cừ, Đà Nẵng', 390000, '07:00:00', '21:00:00', '9', 'approved', '2025-05-03 08:40:00'),
+(10, 11, 'Sân bóng F2', '707 Lê Duẩn, Đà Nẵng', 420000, '08:00:00', '22:00:00', '11', 'approved', '2025-05-03 08:45:00');
 
--- 5. Thêm 20 sản phẩm (mỗi sân có 2 sản phẩm)
-INSERT INTO products (field_id, name, description, price, image) VALUES
-(1, 'Water Bottle', '500ml mineral water', 10000, 'product_1.jpg'),
-(1, 'Energy Drink', '250ml energy drink', 15000, 'product_2.jpg'),
-(2, 'Water Bottle', '500ml mineral water', 10000, 'product_1.jpg'),
-(2, 'Energy Drink', '250ml energy drink', 15000, 'product_2.jpg'),
-(3, 'Water Bottle', '500ml mineral water', 10000, 'product_1.jpg'),
-(3, 'Energy Drink', '250ml energy drink', 15000, 'product_2.jpg'),
-(4, 'Water Bottle', '500ml mineral water', 10000, 'product_1.jpg'),
-(4, 'Energy Drink', '250ml energy drink', 15000, 'product_2.jpg'),
-(5, 'Water Bottle', '500ml mineral water', 10000, 'product_1.jpg'),
-(5, 'Energy Drink', '250ml energy drink', 15000, 'product_2.jpg'),
-(6, 'Water Bottle', '500ml mineral water', 10000, 'product_1.jpg'),
-(6, 'Energy Drink', '250ml energy drink', 15000, 'product_2.jpg'),
-(7, 'Water Bottle', '500ml mineral water', 10000, 'product_1.jpg'),
-(7, 'Energy Drink', '250ml energy drink', 15000, 'product_2.jpg'),
-(8, 'Water Bottle', '500ml mineral water', 10000, 'product_1.jpg'),
-(8, 'Energy Drink', '250ml energy drink', 15000, 'product_2.jpg'),
-(9, 'Water Bottle', '500ml mineral water', 10000, 'product_1.jpg'),
-(9, 'Energy Drink', '250ml energy drink', 15000, 'product_2.jpg'),
-(10, 'Water Bottle', '500ml mineral water', 10000, 'product_1.jpg'),
-(10, 'Energy Drink', '250ml energy drink', 15000, 'product_2.jpg');
+INSERT INTO field_images (field_id, image, created_at)
+VALUES 
+(1, 'field1.jpg', '2025-05-03 09:00:00'),
+(2, 'field2.jpg', '2025-05-03 09:05:00'),
+(3, 'field3.jpg', '2025-05-03 09:10:00'),
+(4, 'field4.jpg', '2025-05-03 09:15:00'),
+(5, 'field5.jpg', '2025-05-03 09:20:00'),
+(6, 'field6.jpg', '2025-05-03 09:25:00'),
+(7, 'field7.jpg', '2025-05-03 09:30:00'),
+(8, 'field8.jpg', '2025-05-03 09:35:00'),
+(9, 'field9.jpg', '2025-05-03 09:40:00'),
+(10, 'field10.jpg', '2025-05-03 09:45:00');
 
--- 6. Thêm 50 yêu cầu đặt sân (mỗi khách hàng đặt 2-3 sân)
-INSERT INTO bookings (user_id, field_id, booking_date, start_time, end_time, total_price, status) VALUES
-(12, 1, '2025-05-12', '08:00:00', '09:00:00', 100000, 'confirmed'),
-(12, 2, '2025-05-13', '09:00:00', '10:00:00', 150000, 'pending'),
-(12, 3, '2025-05-14', '10:00:00', '11:00:00', 200000, 'confirmed'),
-(13, 4, '2025-05-15', '11:00:00', '12:00:00', 250000, 'cancelled'),
-(13, 5, '2025-05-16', '12:00:00', '13:00:00', 300000, 'confirmed'),
-(13, 6, '2025-05-17', '13:00:00', '14:00:00', 350000, 'pending'),
-(14, 7, '2025-05-18', '14:00:00', '15:00:00', 400000, 'confirmed'),
-(14, 8, '2025-05-19', '15:00:00', '16:00:00', 450000, 'cancelled'),
-(14, 9, '2025-05-20', '16:00:00', '17:00:00', 500000, 'confirmed'),
-(15, 10, '2025-05-21', '17:00:00', '18:00:00', 550000, 'pending'),
-(15, 1, '2025-05-22', '18:00:00', '19:00:00', 100000, 'confirmed'),
-(15, 2, '2025-05-23', '19:00:00', '20:00:00', 150000, 'cancelled'),
-(16, 3, '2025-05-24', '20:00:00', '21:00:00', 200000, 'confirmed'),
-(16, 4, '2025-05-25', '21:00:00', '22:00:00', 250000, 'pending'),
-(16, 5, '2025-05-26', '08:00:00', '09:00:00', 300000, 'confirmed'),
-(17, 6, '2025-05-27', '09:00:00', '10:00:00', 350000, 'cancelled'),
-(17, 7, '2025-05-28', '10:00:00', '11:00:00', 400000, 'confirmed'),
-(17, 8, '2025-05-29', '11:00:00', '12:00:00', 450000, 'pending'),
-(18, 9, '2025-05-30', '12:00:00', '13:00:00', 500000, 'confirmed'),
-(18, 10, '2025-06-01', '13:00:00', '14:00:00', 550000, 'cancelled'),
-(18, 1, '2025-06-02', '14:00:00', '15:00:00', 100000, 'confirmed'),
-(19, 2, '2025-06-03', '15:00:00', '16:00:00', 150000, 'pending'),
-(19, 3, '2025-06-04', '16:00:00', '17:00:00', 200000, 'confirmed'),
-(19, 4, '2025-06-05', '17:00:00', '18:00:00', 250000, 'cancelled'),
-(20, 5, '2025-06-06', '18:00:00', '19:00:00', 300000, 'confirmed'),
-(20, 6, '2025-06-07', '19:00:00', '20:00:00', 350000, 'pending'),
-(20, 7, '2025-06-08', '20:00:00', '21:00:00', 400000, 'confirmed'),
-(21, 8, '2025-06-09', '21:00:00', '22:00:00', 450000, 'cancelled'),
-(21, 9, '2025-06-10', '08:00:00', '09:00:00', 500000, 'confirmed'),
-(21, 10, '2025-06-11', '09:00:00', '10:00:00', 550000, 'pending'),
-(22, 1, '2025-06-12', '10:00:00', '11:00:00', 100000, 'confirmed'),
-(22, 2, '2025-06-13', '11:00:00', '12:00:00', 150000, 'cancelled'),
-(22, 3, '2025-06-14', '12:00:00', '13:00:00', 200000, 'confirmed'),
-(23, 4, '2025-06-15', '13:00:00', '14:00:00', 250000, 'pending'),
-(23, 5, '2025-06-16', '14:00:00', '15:00:00', 300000, 'confirmed'),
-(23, 6, '2025-06-17', '15:00:00', '16:00:00', 350000, 'cancelled'),
-(24, 7, '2025-06-18', '16:00:00', '17:00:00', 400000, 'confirmed'),
-(24, 8, '2025-06-19', '17:00:00', '18:00:00', 450000, 'pending'),
-(24, 9, '2025-06-20', '18:00:00', '19:00:00', 500000, 'confirmed'),
-(25, 10, '2025-06-21', '19:00:00', '20:00:00', 550000, 'cancelled'),
-(25, 1, '2025-06-22', '20:00:00', '21:00:00', 100000, 'confirmed'),
-(25, 2, '2025-06-23', '21:00:00', '22:00:00', 150000, 'pending'),
-(26, 3, '2025-06-24', '08:00:00', '09:00:00', 200000, 'confirmed'),
-(26, 4, '2025-06-25', '09:00:00', '10:00:00', 250000, 'cancelled'),
-(26, 5, '2025-06-26', '10:00:00', '11:00:00', 300000, 'confirmed'),
-(27, 6, '2025-06-27', '11:00:00', '12:00:00', 350000, 'pending'),
-(27, 7, '2025-06-28', '12:00:00', '13:00:00', 400000, 'confirmed'),
-(27, 8, '2025-06-29', '13:00:00', '14:00:00', 450000, 'cancelled'),
-(28, 9, '2025-06-30', '14:00:00', '15:00:00', 500000, 'confirmed'),
-(28, 10, '2025-07-01', '15:00:00', '16:00:00', 550000, 'pending');
+INSERT INTO products (field_id, name, description, price, image, created_at)
+VALUES 
+(1, 'Nước suối', 'Nước suối 500ml', 10000, 'water.jpg', '2025-05-04 10:00:00'),
+(1, 'Bóng đá', 'Bóng đá loại 5', 50000, 'ball.jpg', '2025-05-04 10:05:00'),
+(2, 'Nước suối', 'Nước suối 500ml', 10000, 'water.jpg', '2025-05-04 10:10:00'),
+(2, 'Áo thi đấu', 'Áo thi đấu đội tuyển', 150000, 'jersey.jpg', '2025-05-04 10:15:00'),
+(3, 'Nước ngọt', 'Nước ngọt 330ml', 15000, 'soda.jpg', '2025-05-04 10:20:00'),
+(3, 'Bóng đá', 'Bóng đá loại 7', 60000, 'ball.jpg', '2025-05-04 10:25:00'),
+(4, 'Nước suối', 'Nước suối 500ml', 10000, 'water.jpg', '2025-05-04 10:30:00'),
+(4, 'Khăn lạnh', 'Khăn lạnh dùng 1 lần', 5000, 'towel.jpg', '2025-05-04 10:35:00'),
+(5, 'Nước ngọt', 'Nước ngọt 330ml', 15000, 'soda.jpg', '2025-05-04 10:40:00'),
+(5, 'Bóng đá', 'Bóng đá loại 5', 50000, 'ball.jpg', '2025-05-04 10:45:00'),
+(6, 'Nước suối', 'Nước suối 500ml', 10000, 'water.jpg', '2025-05-04 10:50:00'),
+(6, 'Áo thi đấu', 'Áo thi đấu đội tuyển', 150000, 'jersey.jpg', '2025-05-04 10:55:00'),
+(7, 'Nước ngọt', 'Nước ngọt 330ml', 15000, 'soda.jpg', '2025-05-04 11:00:00'),
+(7, 'Khăn lạnh', 'Khăn lạnh dùng 1 lần', 5000, 'towel.jpg', '2025-05-04 11:05:00'),
+(8, 'Nước suối', 'Nước suối 500ml', 10000, 'water.jpg', '2025-05-04 11:10:00'),
+(8, 'Bóng đá', 'Bóng đá loại 7', 60000, 'ball.jpg', '2025-05-04 11:15:00'),
+(9, 'Nước ngọt', 'Nước ngọt 330ml', 15000, 'soda.jpg', '2025-05-04 11:20:00'),
+(9, 'Áo thi đấu', 'Áo thi đấu đội tuyển', 150000, 'jersey.jpg', '2025-05-04 11:25:00'),
+(10, 'Nước suối', 'Nước suối 500ml', 10000, 'water.jpg', '2025-05-04 11:30:00'),
+(10, 'Khăn lạnh', 'Khăn lạnh dùng 1 lần', 5000, 'towel.jpg', '2025-05-04 11:35:00');
 
--- 7. Thêm 30 đánh giá (mỗi khách hàng đánh giá 1-2 sân)
-INSERT INTO reviews (user_id, field_id, rating, comment) VALUES
-(12, 1, 5, 'Great field, clean and well-maintained'),
-(12, 2, 4, 'Good experience, but parking is limited'),
-(13, 3, 3, 'Average field, needs better lighting'),
-(13, 4, 5, 'Excellent service and facilities'),
-(14, 5, 4, 'Nice field, friendly staff'),
-(14, 6, 5, 'Top-notch field, highly recommend'),
-(15, 7, 3, 'Decent field, but a bit expensive'),
-(15, 8, 4, 'Good quality, will come back'),
-(16, 9, 5, 'Fantastic field, great atmosphere'),
-(16, 10, 4, 'Very good, but far from city center'),
-(17, 1, 5, 'Perfect place for a match'),
-(17, 2, 3, 'Okay, but grass needs maintenance'),
-(18, 3, 4, 'Good field, clean facilities'),
-(18, 4, 5, 'Loved playing here, great staff'),
-(19, 5, 4, 'Nice environment, good experience'),
-(19, 6, 5, 'One of the best fields I’ve played on'),
-(20, 7, 3, 'Average, could improve cleanliness'),
-(20, 8, 4, 'Good field, worth the price'),
-(21, 9, 5, 'Amazing field, highly recommend'),
-(21, 10, 4, 'Great, but booking process can be slow'),
-(22, 1, 5, 'Excellent field, great location'),
-(22, 2, 4, 'Good, but needs better seating'),
-(23, 3, 3, 'Okay field, average experience'),
-(23, 4, 5, 'Fantastic place to play'),
-(24, 5, 4, 'Very good field, friendly staff'),
-(24, 6, 5, 'Top quality, will return'),
-(25, 7, 3, 'Decent, but a bit pricey'),
-(25, 8, 4, 'Good field, clean and maintained'),
-(26, 9, 5, 'Best field I’ve played on'),
-(26, 10, 4, 'Great experience, but far from home');
+INSERT INTO bookings (user_id, field_id, booking_date, start_time, end_time, total_price, status, selected_products, created_at)
+VALUES 
+-- Đặt sân bởi customer1 (ID 12)
+(12, 1, '2025-05-15', '08:00:00', '09:00:00', 300000, 'pending', '[{"product_id": 1, "name": "Nước suối", "price": 10000, "quantity": 2}]', '2025-05-05 08:00:00'),
+(12, 2, '2025-05-15', '09:00:00', '10:00:00', 350000, 'confirmed', '[{"product_id": 3, "name": "Nước suối", "price": 10000, "quantity": 1}]', '2025-05-05 08:05:00'),
+(12, 3, '2025-05-15', '10:00:00', '11:00:00', 400000, 'completed', '[{"product_id": 5, "name": "Nước ngọt", "price": 15000, "quantity": 3}]', '2025-05-05 08:10:00'),
+-- Đặt sân bởi customer2 (ID 13)
+(13, 4, '2025-05-15', '11:00:00', '12:00:00', 320000, 'pending', NULL, '2025-05-05 08:15:00'),
+(13, 5, '2025-05-15', '12:00:00', '13:00:00', 370000, 'cancelled', '[{"product_id": 9, "name": "Nước ngọt", "price": 15000, "quantity": 2}]', '2025-05-05 08:20:00'),
+(13, 6, '2025-05-15', '13:00:00', '14:00:00', 410000, 'confirmed', '[{"product_id": 11, "name": "Nước suối", "price": 10000, "quantity": 1}]', '2025-05-05 08:25:00'),
+-- Đặt sân bởi customer3 (ID 14)
+(14, 7, '2025-05-15', '14:00:00', '15:00:00', 310000, 'completed', '[{"product_id": 13, "name": "Nước ngọt", "price": 15000, "quantity": 2}]', '2025-05-05 08:30:00'),
+(14, 8, '2025-05-15', '15:00:00', '16:00:00', 360000, 'pending', NULL, '2025-05-05 08:35:00'),
+(14, 9, '2025-05-15', '16:00:00', '17:00:00', 390000, 'confirmed', '[{"product_id": 17, "name": "Nước ngọt", "price": 15000, "quantity": 1}]', '2025-05-05 08:40:00'),
+-- Đặt sân bởi customer4 (ID 15)
+(15, 10, '2025-05-15', '17:00:00', '18:00:00', 420000, 'cancelled', '[{"product_id": 19, "name": "Nước suối", "price": 10000, "quantity": 3}]', '2025-05-05 08:45:00'),
+(15, 1, '2025-05-16', '08:00:00', '09:00:00', 300000, 'pending', NULL, '2025-05-05 08:50:00'),
+(15, 2, '2025-05-16', '09:00:00', '10:00:00', 350000, 'completed', '[{"product_id": 3, "name": "Nước suối", "price": 10000, "quantity": 2}]', '2025-05-05 08:55:00'),
+-- Đặt sân bởi customer5 (ID 16)
+(16, 3, '2025-05-16', '10:00:00', '11:00:00', 400000, 'confirmed', '[{"product_id": 5, "name": "Nước ngọt", "price": 15000, "quantity": 1}]', '2025-05-05 09:00:00'),
+(16, 4, '2025-05-16', '11:00:00', '12:00:00', 320000, 'pending', NULL, '2025-05-05 09:05:00'),
+(16, 5, '2025-05-16', '12:00:00', '13:00:00', 370000, 'cancelled', '[{"product_id": 9, "name": "Nước ngọt", "price": 15000, "quantity": 2}]', '2025-05-05 09:10:00'),
+-- Đặt sân bởi customer6 (ID 17)
+(17, 6, '2025-05-16', '13:00:00', '14:00:00', 410000, 'completed', '[{"product_id": 11, "name": "Nước suối", "price": 10000, "quantity": 1}]', '2025-05-05 09:15:00'),
+(17, 7, '2025-05-16', '14:00:00', '15:00:00', 310000, 'pending', NULL, '2025-05-05 09:20:00'),
+(17, 8, '2025-05-16', '15:00:00', '16:00:00', 360000, 'confirmed', '[{"product_id": 15, "name": "Bóng đá", "price": 60000, "quantity": 1}]', '2025-05-05 09:25:00'),
+-- Đặt sân bởi customer7 (ID 18)
+(18, 9, '2025-05-16', '16:00:00', '17:00:00', 390000, 'cancelled', '[{"product_id": 17, "name": "Nước ngọt", "price": 15000, "quantity": 2}]', '2025-05-05 09:30:00'),
+(18, 10, '2025-05-16', '17:00:00', '18:00:00', 420000, 'pending', NULL, '2025-05-05 09:35:00'),
+(18, 1, '2025-05-17', '08:00:00', '09:00:00', 300000, 'completed', '[{"product_id": 1, "name": "Nước suối", "price": 10000, "quantity": 3}]', '2025-05-05 09:40:00'),
+-- Đặt sân bởi customer8 (ID 19)
+(19, 2, '2025-05-17', '09:00:00', '10:00:00', 350000, 'confirmed', '[{"product_id": 3, "name": "Nước suối", "price": 10000, "quantity": 1}]', '2025-05-05 09:45:00'),
+(19, 3, '2025-05-17', '10:00:00', '11:00:00', 400000, 'pending', NULL, '2025-05-05 09:50:00'),
+(19, 4, '2025-05-17', '11:00:00', '12:00:00', 320000, 'cancelled', '[{"product_id": 7, "name": "Nước suối", "price": 10000, "quantity": 2}]', '2025-05-05 09:55:00'),
+-- Đặt sân bởi customer9 (ID 20)
+(20, 5, '2025-05-17', '12:00:00', '13:00:00', 370000, 'completed', '[{"product_id": 9, "name": "Nước ngọt", "price": 15000, "quantity": 1}]', '2025-05-05 10:00:00'),
+(20, 6, '2025-05-17', '13:00:00', '14:00:00', 410000, 'pending', NULL, '2025-05-05 10:05:00'),
+(20, 7, '2025-05-17', '14:00:00', '15:00:00', 310000, 'confirmed', '[{"product_id": 13, "name": "Nước ngọt", "price": 15000, "quantity": 2}]', '2025-05-05 10:10:00'),
+-- Đặt sân bởi customer10 (ID 21)
+(21, 8, '2025-05-17', '15:00:00', '16:00:00', 360000, 'cancelled', '[{"product_id": 15, "name": "Bóng đá", "price": 60000, "quantity": 1}]', '2025-05-05 10:15:00'),
+(21, 9, '2025-05-17', '16:00:00', '17:00:00', 390000, 'pending', NULL, '2025-05-05 10:20:00'),
+(21, 10, '2025-05-17', '17:00:00', '18:00:00', 420000, 'completed', '[{"product_id": 19, "name": "Nước suối", "price": 10000, "quantity": 3}]', '2025-05-05 10:25:00'),
+-- Đặt sân bởi customer11 (ID 22)
+(22, 1, '2025-05-18', '08:00:00', '09:00:00', 300000, 'confirmed', '[{"product_id": 1, "name": "Nước suối", "price": 10000, "quantity": 1}]', '2025-05-05 10:30:00'),
+(22, 2, '2025-05-18', '09:00:00', '10:00:00', 350000, 'pending', NULL, '2025-05-05 10:35:00'),
+(22, 3, '2025-05-18', '10:00:00', '11:00:00', 400000, 'cancelled', '[{"product_id": 5, "name": "Nước ngọt", "price": 15000, "quantity": 2}]', '2025-05-05 10:40:00'),
+-- Đặt sân bởi customer12 (ID 23)
+(23, 4, '2025-05-18', '11:00:00', '12:00:00', 320000, 'completed', '[{"product_id": 7, "name": "Nước suối", "price": 10000, "quantity": 1}]', '2025-05-05 10:45:00'),
+(23, 5, '2025-05-18', '12:00:00', '13:00:00', 370000, 'pending', NULL, '2025-05-05 10:50:00'),
+(23, 6, '2025-05-18', '13:00:00', '14:00:00', 410000, 'confirmed', '[{"product_id": 11, "name": "Nước suối", "price": 10000, "quantity": 2}]', '2025-05-05 10:55:00'),
+-- Đặt sân bởi customer13 (ID 24)
+(24, 7, '2025-05-18', '14:00:00', '15:00:00', 310000, 'cancelled', '[{"product_id": 13, "name": "Nước ngọt", "price": 15000, "quantity": 1}]', '2025-05-05 11:00:00'),
+(24, 8, '2025-05-18', '15:00:00', '16:00:00', 360000, 'pending', NULL, '2025-05-05 11:05:00'),
+(24, 9, '2025-05-18', '16:00:00', '17:00:00', 390000, 'completed', '[{"product_id": 17, "name": "Nước ngọt", "price": 15000, "quantity": 2}]', '2025-05-05 11:10:00'),
+-- Đặt sân bởi customer14 (ID 25)
+(25, 10, '2025-05-18', '17:00:00', '18:00:00', 420000, 'confirmed', '[{"product_id": 19, "name": "Nước suối", "price": 10000, "quantity": 1}]', '2025-05-05 11:15:00'),
+(25, 1, '2025-05-19', '08:00:00', '09:00:00', 300000, 'pending', NULL, '2025-05-05 11:20:00'),
+(25, 2, '2025-05-19', '09:00:00', '10:00:00', 350000, 'cancelled', '[{"product_id": 3, "name": "Nước suối", "price": 10000, "quantity": 2}]', '2025-05-05 11:25:00'),
+-- Đặt sân bởi customer15 (ID 26)
+(26, 3, '2025-05-19', '10:00:00', '11:00:00', 400000, 'completed', '[{"product_id": 5, "name": "Nước ngọt", "price": 15000, "quantity": 1}]', '2025-05-05 11:30:00'),
+(26, 4, '2025-05-19', '11:00:00', '12:00:00', 320000, 'pending', NULL, '2025-05-05 11:35:00'),
+(26, 5, '2025-05-19', '12:00:00', '13:00:00', 370000, 'confirmed', '[{"product_id": 9, "name": "Nước ngọt", "price": 15000, "quantity": 2}]', '2025-05-05 11:40:00'),
+-- Đặt sân bởi customer16 (ID 27)
+(27, 6, '2025-05-19', '13:00:00', '14:00:00', 410000, 'cancelled', '[{"product_id": 11, "name": "Nước suối", "price": 10000, "quantity": 1}]', '2025-05-05 11:45:00'),
+(27, 7, '2025-05-19', '14:00:00', '15:00:00', 310000, 'pending', NULL, '2025-05-05 11:50:00'),
+(27, 8, '2025-05-19', '15:00:00', '16:00:00', 360000, 'completed', '[{"product_id": 15, "name": "Bóng đá", "price": 60000, "quantity": 1}]', '2025-05-05 11:55:00'),
+-- Đặt sân bởi customer17 (ID 28)
+(28, 9, '2025-05-19', '16:00:00', '17:00:00', 390000, 'confirmed', '[{"product_id": 17, "name": "Nước ngọt", "price": 15000, "quantity": 2}]', '2025-05-05 12:00:00'),
+(28, 10, '2025-05-19', '17:00:00', '18:00:00', 420000, 'pending', NULL, '2025-05-05 12:05:00'),
+(28, 1, '2025-05-20', '08:00:00', '09:00:00', 300000, 'cancelled', '[{"product_id": 1, "name": "Nước suối", "price": 10000, "quantity": 3}]', '2025-05-05 12:10:00'),
+-- Đặt sân bởi customer18 (ID 29)
+(29, 2, '2025-05-20', '09:00:00', '10:00:00', 350000, 'completed', '[{"product_id": 3, "name": "Nước suối", "price": 10000, "quantity": 1}]', '2025-05-05 12:15:00'),
+(29, 3, '2025-05-20', '10:00:00', '11:00:00', 400000, 'pending', NULL, '2025-05-05 12:20:00'),
+(29, 4, '2025-05-20', '11:00:00', '12:00:00', 320000, 'confirmed', '[{"product_id": 7, "name": "Nước suối", "price": 10000, "quantity": 2}]', '2025-05-05 12:25:00'),
+-- Đặt sân bởi customer19 (ID 30)
+(30, 5, '2025-05-20', '12:00:00', '13:00:00', 370000, 'cancelled', '[{"product_id": 9, "name": "Nước ngọt", "price": 15000, "quantity": 1}]', '2025-05-05 12:30:00'),
+(30, 6, '2025-05-20', '13:00:00', '14:00:00', 410000, 'pending', NULL, '2025-05-05 12:35:00'),
+(30, 7, '2025-05-20', '14:00:00', '15:00:00', 310000, 'completed', '[{"product_id": 13, "name": "Nước ngọt", "price": 15000, "quantity": 2}]', '2025-05-05 12:40:00'),
+-- Đặt sân bởi customer20 (ID 31)
+(31, 8, '2025-05-20', '15:00:00', '16:00:00', 360000, 'confirmed', '[{"product_id": 15, "name": "Bóng đá", "price": 60000, "quantity": 1}]', '2025-05-05 12:45:00'),
+(31, 9, '2025-05-20', '16:00:00', '17:00:00', 390000, 'pending', NULL, '2025-05-05 12:50:00'),
+(31, 10, '2025-05-20', '17:00:00', '18:00:00', 420000, 'cancelled', '[{"product_id": 19, "name": "Nước suối", "price": 10000, "quantity": 3}]', '2025-05-05 12:55:00');
 
--- 8. Thêm 10 yêu cầu hỗ trợ (từ 10 khách hàng đầu tiên)
-INSERT INTO support_requests (user_id, full_name, email, content, status) VALUES
-(12, 'Customer 1', 'customer1@example.com', 'Need help with booking confirmation', 'pending'),
-(13, 'Customer 2', 'customer2@example.com', 'Issue with payment process', 'resolved'),
-(14, 'Customer 3', 'customer3@example.com', 'Field availability question', 'pending'),
-(15, 'Customer 4', 'customer4@example.com', 'Request to change booking time', 'resolved'),
-(16, 'Customer 5', 'customer5@example.com', 'Problem with account login', 'pending'),
-(17, 'Customer 6', 'customer6@example.com', 'Complaint about field condition', 'resolved'),
-(18, 'Customer 7', 'customer7@example.com', 'Need refund for cancelled booking', 'pending'),
-(19, 'Customer 8', 'customer8@example.com', 'Question about product purchase', 'resolved'),
-(20, 'Customer 9', 'customer9@example.com', 'Issue with notification settings', 'pending'),
-(21, 'Customer 10', 'customer10@example.com', 'General inquiry about services', 'resolved');
+INSERT INTO reviews (user_id, field_id, rating, comment, created_at)
+VALUES 
+(12, 1, 4, 'Sân đẹp, sạch sẽ', '2025-05-06 08:00:00'),
+(12, 2, 3, 'Sân ổn nhưng hơi nhỏ', '2025-05-06 08:05:00'),
+(12, 3, 5, 'Rất hài lòng', '2025-05-06 08:10:00'),
+(13, 4, 2, 'Sân xuống cấp', '2025-05-06 08:15:00'),
+(13, 5, 4, 'Dịch vụ tốt', '2025-05-06 08:20:00'),
+(13, 6, 3, 'Giá hơi cao', '2025-05-06 08:25:00'),
+(14, 7, 5, 'Tuyệt vời', '2025-05-06 08:30:00'),
+(14, 8, 4, 'Sân đẹp, phục vụ tốt', '2025-05-06 08:35:00'),
+(14, 9, 3, 'Cần cải thiện ánh sáng', '2025-05-06 08:40:00'),
+(15, 10, 2, 'Sân không sạch', '2025-05-06 08:45:00'),
+(15, 1, 4, 'Sân tốt, giá hợp lý', '2025-05-06 08:50:00'),
+(15, 2, 5, 'Rất thích sân này', '2025-05-06 08:55:00'),
+(16, 3, 3, 'Sân ổn, nhưng đông quá', '2025-05-06 09:00:00'),
+(16, 4, 4, 'Dịch vụ tốt, sân sạch', '2025-05-06 09:05:00'),
+(16, 5, 5, 'Rất hài lòng', '2025-05-06 09:10:00'),
+(17, 6, 2, 'Sân cần bảo trì', '2025-05-06 09:15:00'),
+(17, 7, 4, 'Sân đẹp, giá tốt', '2025-05-06 09:20:00'),
+(17, 8, 3, 'Chất lượng trung bình', '2025-05-06 09:25:00'),
+(18, 9, 5, 'Sân tuyệt vời', '2025-05-06 09:30:00'),
+(18, 10, 4, 'Sân sạch, phục vụ tốt', '2025-05-06 09:35:00'),
+(18, 1, 3, 'Cần cải thiện dịch vụ', '2025-05-06 09:40:00'),
+(19, 2, 2, 'Sân không đạt yêu cầu', '2025-05-06 09:45:00'),
+(19, 3, 4, 'Sân đẹp, giá hợp lý', '2025-05-06 09:50:00'),
+(19, 4, 5, 'Rất hài lòng', '2025-05-06 09:55:00'),
+(20, 5, 3, 'Sân ổn, nhưng đông', '2025-05-06 10:00:00'),
+(20, 6, 4, 'Sân sạch, dịch vụ tốt', '2025-05-06 10:05:00'),
+(20, 7, 5, 'Tuyệt vời', '2025-05-06 10:10:00'),
+(21, 8, 2, 'Sân cần bảo trì', '2025-05-06 10:15:00'),
+(21, 9, 4, 'Sân đẹp, giá hợp lý', '2025-05-06 10:20:00'),
+(21, 10, 3, 'Chất lượng trung bình', '2025-05-06 10:25:00');
 
--- 9. Thêm 50 conversations (mỗi khách hàng có 2-3 cuộc trò chuyện với chủ sân)
-INSERT INTO conversations (user_id, owner_id) VALUES
-(12, 2), (12, 3), (12, 4),
-(13, 5), (13, 6), (13, 7),
-(14, 8), (14, 9), (14, 10),
-(15, 2), (15, 3), (15, 4),
-(16, 5), (16, 6), (16, 7),
-(17, 8), (17, 9), (17, 10),
-(18, 2), (18, 3), (18, 4),
-(19, 5), (19, 6), (19, 7),
-(20, 8), (20, 9), (20, 10),
-(21, 2), (21, 3), (21, 4),
-(22, 5), (22, 6), (22, 7),
-(23, 8), (23, 9), (23, 10),
-(24, 2), (24, 3), (24, 4),
-(25, 5), (25, 6), (25, 7),
-(26, 8), (26, 9), (26, 10),
-(27, 2), (27, 3), (27, 4),
-(28, 5), (28, 6);
+INSERT INTO support_requests (user_id, full_name, email, content, status, created_at)
+VALUES 
+(12, 'Khách hàng 1', 'customer1@example.com', 'Tôi không thể đặt sân vào ngày 15/05', 'pending', '2025-05-07 08:00:00'),
+(13, 'Khách hàng 2', 'customer2@example.com', 'Sân bóng A1 không sạch', 'resolved', '2025-05-07 08:05:00'),
+(14, 'Khách hàng 3', 'customer3@example.com', 'Yêu cầu hoàn tiền đặt sân B1', 'pending', '2025-05-07 08:10:00'),
+(15, 'Khách hàng 4', 'customer4@example.com', 'Không nhận được xác nhận đặt sân', 'resolved', '2025-05-07 08:15:00'),
+(16, 'Khách hàng 5', 'customer5@example.com', 'Sân C2 đóng cửa sớm', 'pending', '2025-05-07 08:20:00'),
+(17, 'Khách hàng 6', 'customer6@example.com', 'Cần hỗ trợ đặt sân D1', 'resolved', '2025-05-07 08:25:00'),
+(18, 'Khách hàng 7', 'customer7@example.com', 'Không thể đăng nhập', 'pending', '2025-05-07 08:30:00'),
+(19, 'Khách hàng 8', 'customer8@example.com', 'Sân E2 không đúng mô tả', 'resolved', '2025-05-07 08:35:00'),
+(20, 'Khách hàng 9', 'customer9@example.com', 'Yêu cầu hủy đặt sân F1', 'pending', '2025-05-07 08:40:00'),
+(21, 'Khách hàng 10', 'customer10@example.com', 'Sân F2 không có nước uống', 'resolved', '2025-05-07 08:45:00');
 
--- 10. Thêm 100 tin nhắn (mỗi conversation có 2 tin nhắn)
-INSERT INTO messages (conversation_id, sender_id, receiver_id, message) VALUES
-(1, 12, 2, 'Hello, is Field 1 available tomorrow?'),
-(1, 2, 12, 'Yes, it’s available from 08:00 to 12:00.'),
-(2, 12, 3, 'Can I book Field 2 for next week?'),
-(2, 3, 12, 'Please provide the date and time.'),
-(3, 12, 4, 'What’s the price for Field 3?'),
-(3, 4, 12, 'It’s 200,000 VND per hour.'),
-(4, 13, 5, 'Is Field 4 available this weekend?'),
-(4, 5, 13, 'Yes, available on Saturday morning.'),
-(5, 13, 6, 'Can you confirm my booking for Field 5?'),
-(5, 6, 13, 'Confirmed for 12:00 on 2025-05-16.'),
-(6, 13, 7, 'Any discounts for Field 6?'),
-(6, 7, 13, 'No discounts currently, sorry.'),
-(7, 14, 8, 'Is Field 7 open in the evening?'),
-(7, 8, 14, 'Yes, until 23:00.'),
-(8, 14, 9, 'Can I book Field 8 for 2 hours?'),
-(8, 9, 14, 'Yes, please specify the time.'),
-(9, 14, 10, 'What’s the condition of Field 9?'),
-(9, 10, 14, 'It’s in excellent condition.'),
-(10, 15, 2, 'Can I cancel my booking for Field 1?'),
-(10, 2, 15, 'Yes, please provide the booking ID.'),
-(11, 15, 3, 'Is Field 2 available on Friday?'),
-(11, 3, 15, 'Yes, from 09:00 to 15:00.'),
-(12, 15, 4, 'How much is Field 3 per hour?'),
-(12, 4, 15, 'It’s 200,000 VND per hour.'),
-(13, 16, 5, 'Can I book Field 4 for next month?'),
-(13, 5, 16, 'Please provide the exact date.'),
-(14, 16, 6, 'Is Field 5 well-lit at night?'),
-(14, 6, 16, 'Yes, it has excellent lighting.'),
-(15, 16, 7, 'Any promotions for Field 6?'),
-(15, 7, 16, 'Not at the moment.'),
-(16, 17, 8, 'Can I book Field 7 for a group?'),
-(16, 8, 17, 'Yes, how many people?'),
-(17, 17, 9, 'Is Field 8 available tomorrow?'),
-(17, 9, 17, 'Yes, from 11:00 to 17:00.'),
-(18, 17, 10, 'What’s the price for Field 9?'),
-(18, 10, 17, 'It’s 500,000 VND per hour.'),
-(19, 18, 2, 'Can I book Field 1 for 2 hours?'),
-(19, 2, 18, 'Yes, please provide the time.'),
-(20, 18, 3, 'Is Field 2 clean and maintained?'),
-(20, 3, 18, 'Yes, it’s in great condition.'),
-(21, 18, 4, 'Any discounts for Field 3?'),
-(21, 4, 18, 'No discounts currently.'),
-(22, 19, 5, 'Can I book Field 4 for a match?'),
-(22, 5, 19, 'Yes, please specify the date.'),
-(23, 19, 6, 'Is Field 5 available on Sunday?'),
-(23, 6, 19, 'Yes, from 08:00 to 14:00.'),
-(24, 19, 7, 'What’s the price for Field 6?'),
-(24, 7, 19, 'It’s 350,000 VND per hour.'),
-(25, 20, 8, 'Can I book Field 7 for next week?'),
-(25, 8, 20, 'Please provide the date and time.'),
-(26, 20, 9, 'Is Field 8 well-maintained?'),
-(26, 9, 20, 'Yes, it’s in top condition.'),
-(27, 20, 10, 'Can I book Field 9 for 3 hours?'),
-(27, 10, 20, 'Yes, please specify the time.'),
-(28, 21, 2, 'Is Field 1 available tomorrow?'),
-(28, 2, 21, 'Yes, from 08:00 to 12:00.'),
-(29, 21, 3, 'Can I book Field 2 for a group?'),
-(29, 3, 21, 'Yes, how many players?'),
-(30, 21, 4, 'What’s the price for Field 3?'),
-(30, 4, 21, 'It’s 200,000 VND per hour.'),
-(31, 22, 5, 'Is Field 4 available next week?'),
-(31, 5, 22, 'Yes, please provide the date.'),
-(32, 22, 6, 'Can I book Field 5 for 2 hours?'),
-(32, 6, 22, 'Yes, please specify the time.'),
-(33, 22, 7, 'Is Field 6 clean?'),
-(33, 7, 22, 'Yes, it’s well-maintained.'),
-(34, 23, 8, 'Can I book Field 7 for a match?'),
-(34, 8, 23, 'Yes, please provide the date.'),
-(35, 23, 9, 'Is Field 8 available on Saturday?'),
-(35, 9, 23, 'Yes, from 09:00 to 15:00.'),
-(36, 23, 10, 'What’s the price for Field 9?'),
-(36, 10, 23, 'It’s 500,000 VND per hour.'),
-(37, 24, 2, 'Can I book Field 1 for next month?'),
-(37, 2, 24, 'Please provide the exact date.'),
-(38, 24, 3, 'Is Field 2 available tomorrow?'),
-(38, 3, 24, 'Yes, from 10:00 to 14:00.'),
-(39, 24, 4, 'Can I book Field 3 for 2 hours?'),
-(39, 4, 24, 'Yes, please specify the time.'),
-(40, 25, 5, 'Is Field 4 well-lit at night?'),
-(40, 5, 25, 'Yes, it has great lighting.'),
-(41, 25, 6, 'Can I book Field 5 for a group?'),
-(41, 6, 25, 'Yes, how many players?'),
-(42, 25, 7, 'What’s the price for Field 6?'),
-(42, 7, 25, 'It’s 350,000 VND per hour.'),
-(43, 26, 8, 'Is Field 7 available next week?'),
-(43, 8, 26, 'Yes, please provide the date.'),
-(44, 26, 9, 'Can I book Field 8 for 2 hours?'),
-(44, 9, 26, 'Yes, please specify the time.'),
-(45, 26, 10, 'Is Field 9 clean and maintained?'),
-(45, 10, 26, 'Yes, it’s in excellent condition.'),
-(46, 27, 2, 'Can I book Field 1 for a match?'),
-(46, 2, 27, 'Yes, please provide the date.'),
-(47, 27, 3, 'Is Field 2 available on Sunday?'),
-(47, 3, 27, 'Yes, from 08:00 to 12:00.'),
-(48, 27, 4, 'What’s the price for Field 3?'),
-(48, 4, 27, 'It’s 200,000 VND per hour.'),
-(49, 28, 5, 'Can I book Field 4 for next week?'),
-(49, 5, 28, 'Yes, please provide the date.'),
-(50, 28, 6, 'Is Field 5 available tomorrow?'),
-(50, 6, 28, 'Yes, from 09:00 to 13:00.');
+INSERT INTO conversations (user_id, owner_id, created_at)
+VALUES 
+(12, 2, '2025-05-08 09:00:00'),  -- customer1 với owner1
+(13, 3, '2025-05-08 09:05:00'),  -- customer2 với owner2
+(14, 4, '2025-05-08 09:10:00'),  -- customer3 với owner3
+(15, 5, '2025-05-08 09:15:00'),  -- customer4 với owner4
+(16, 6, '2025-05-08 09:20:00'),  -- customer5 với owner5
+(17, 7, '2025-05-08 09:25:00'),  -- customer6 với owner6
+(18, 8, '2025-05-08 09:30:00'),  -- customer7 với owner7
+(19, 9, '2025-05-08 09:35:00'),  -- customer8 với owner8
+(20, 10, '2025-05-08 09:40:00'), -- customer9 với owner9
+(21, 11, '2025-05-08 09:45:00'), -- customer10 với owner10
+(22, 2, '2025-05-08 09:50:00'),  -- customer11 với owner1
+(23, 3, '2025-05-08 09:55:00'),  -- customer12 với owner2
+(24, 4, '2025-05-08 10:00:00'),  -- customer13 với owner3
+(25, 5, '2025-05-08 10:05:00'),  -- customer14 với owner4
+(26, 6, '2025-05-08 10:10:00'),  -- customer15 với owner5
+(27, 7, '2025-05-08 10:15:00'),  -- customer16 với owner6
+(28, 8, '2025-05-08 10:20:00'),  -- customer17 với owner7
+(29, 9, '2025-05-08 10:25:00'),  -- customer18 với owner8
+(30, 10, '2025-05-08 10:30:00'), -- customer19 với owner9
+(31, 11, '2025-05-08 10:35:00'); -- customer20 với owner10
 
--- 11. Thêm 100 thông báo
--- 50 thông báo cho booking confirmed
-INSERT INTO notifications (user_id, message, type, related_id) VALUES
-(12, 'Booking 1 has been confirmed', 'booking_confirmed', 1),
-(12, 'Booking 3 has been confirmed', 'booking_confirmed', 3),
-(13, 'Booking 5 has been confirmed', 'booking_confirmed', 5),
-(14, 'Booking 7 has been confirmed', 'booking_confirmed', 7),
-(14, 'Booking 9 has been confirmed', 'booking_confirmed', 9),
-(15, 'Booking 11 has been confirmed', 'booking_confirmed', 11),
-(16, 'Booking 13 has been confirmed', 'booking_confirmed', 13),
-(16, 'Booking 15 has been confirmed', 'booking_confirmed', 15),
-(17, 'Booking 17 has been confirmed', 'booking_confirmed', 17),
-(18, 'Booking 19 has been confirmed', 'booking_confirmed', 19),
-(18, 'Booking 21 has been confirmed', 'booking_confirmed', 21),
-(19, 'Booking 23 has been confirmed', 'booking_confirmed', 23),
-(20, 'Booking 25 has been confirmed', 'booking_confirmed', 25),
-(20, 'Booking 27 has been confirmed', 'booking_confirmed', 27),
-(21, 'Booking 29 has been confirmed', 'booking_confirmed', 29),
-(22, 'Booking 31 has been confirmed', 'booking_confirmed', 31),
-(22, 'Booking 33 has been confirmed', 'booking_confirmed', 33),
-(23, 'Booking 35 has been confirmed', 'booking_confirmed', 35),
-(24, 'Booking 37 has been confirmed', 'booking_confirmed', 37),
-(24, 'Booking 39 has been confirmed', 'booking_confirmed', 39),
-(25, 'Booking 41 has been confirmed', 'booking_confirmed', 41),
-(26, 'Booking 43 has been confirmed', 'booking_confirmed', 43),
-(26, 'Booking 45 has been confirmed', 'booking_confirmed', 45),
-(27, 'Booking 47 has been confirmed', 'booking_confirmed', 47),
-(28, 'Booking 49 has been confirmed', 'booking_confirmed', 49),
-(12, 'Booking 1 has been confirmed', 'booking_confirmed', 1),
-(12, 'Booking 3 has been confirmed', 'booking_confirmed', 3),
-(13, 'Booking 5 has been confirmed', 'booking_confirmed', 5),
-(14, 'Booking 7 has been confirmed', 'booking_confirmed', 7),
-(14, 'Booking 9 has been confirmed', 'booking_confirmed', 9),
-(15, 'Booking 11 has been confirmed', 'booking_confirmed', 11),
-(16, 'Booking 13 has been confirmed', 'booking_confirmed', 13),
-(16, 'Booking 15 has been confirmed', 'booking_confirmed', 15),
-(17, 'Booking 17 has been confirmed', 'booking_confirmed', 17),
-(18, 'Booking 19 has been confirmed', 'booking_confirmed', 19),
-(18, 'Booking 21 has been confirmed', 'booking_confirmed', 21),
-(19, 'Booking 23 has been confirmed', 'booking_confirmed', 23),
-(20, 'Booking 25 has been confirmed', 'booking_confirmed', 25),
-(20, 'Booking 27 has been confirmed', 'booking_confirmed', 27),
-(21, 'Booking 29 has been confirmed', 'booking_confirmed', 29),
-(22, 'Booking 31 has been confirmed', 'booking_confirmed', 31),
-(22, 'Booking 33 has been confirmed', 'booking_confirmed', 33),
-(23, 'Booking 35 has been confirmed', 'booking_confirmed', 35),
-(24, 'Booking 37 has been confirmed', 'booking_confirmed', 37),
-(24, 'Booking 39 has been confirmed', 'booking_confirmed', 39),
-(25, 'Booking 41 has been confirmed', 'booking_confirmed', 41),
-(26, 'Booking 43 has been confirmed', 'booking_confirmed', 43),
-(26, 'Booking 45 has been confirmed', 'booking_confirmed', 45),
-(27, 'Booking 47 has been confirmed', 'booking_confirmed', 47),
-(28, 'Booking 49 has been confirmed', 'booking_confirmed', 49);
+INSERT INTO messages (conversation_id, sender_id, receiver_id, message, created_at)
+VALUES 
+-- Cuộc trò chuyện 1 (customer1 và owner1)
+(1, 12, 2, 'Chào anh, sân A1 còn trống vào ngày 15/05 không?', '2025-05-08 09:00:00'),
+(1, 2, 12, 'Chào bạn, còn trống từ 08:00 đến 09:00 nhé!', '2025-05-08 09:02:00'),
+(1, 12, 2, 'Cảm ơn anh, tôi sẽ đặt ngay!', '2025-05-08 09:04:00'),
+-- Cuộc trò chuyện 2 (customer2 và owner2)
+(2, 13, 3, 'Sân A2 có sẵn ngày 15/05 không?', '2025-05-08 09:05:00'),
+(2, 3, 13, 'Có sẵn từ 09:00 đến 10:00, bạn đặt nhé!', '2025-05-08 09:07:00'),
+-- Cuộc trò chuyện 3 (customer3 và owner3)
+(3, 14, 4, 'Sân B1 có thể đặt vào 10:00 ngày 15/05 không?', '2025-05-08 09:10:00'),
+(3, 4, 14, 'Được bạn ơi, bạn đặt đi nhé!', '2025-05-08 09:12:00'),
+(3, 14, 4, 'Cảm ơn, tôi đặt ngay đây!', '2025-05-08 09:14:00'),
+-- Cuộc trò chuyện 4 (customer4 và owner4)
+(4, 15, 5, 'Sân C1 còn trống không anh?', '2025-05-08 09:15:00'),
+(4, 5, 15, 'Còn trống từ 11:00 đến 12:00 ngày 15/05, bạn đặt nhé!', '2025-05-08 09:17:00'),
+-- Cuộc trò chuyện 5 (customer5 và owner5)
+(5, 16, 6, 'Sân C2 có thể đặt ngày 15/05 không?', '2025-05-08 09:20:00'),
+(5, 6, 16, 'Có sẵn từ 12:00 đến 13:00, bạn đặt ngay nhé!', '2025-05-08 09:22:00'),
+(5, 16, 6, 'Ok anh, tôi đặt ngay!', '2025-05-08 09:24:00'),
+-- Cuộc trò chuyện 6 (customer6 và owner6)
+(6, 17, 7, 'Sân D1 có trống ngày 15/05 không?', '2025-05-08 09:25:00'),
+(6, 7, 17, 'Có từ 13:00 đến 14:00, bạn đặt đi nhé!', '2025-05-08 09:27:00'),
+-- Cuộc trò chuyện 7 (customer7 và owner7)
+(7, 18, 8, 'Sân E1 còn trống không anh?', '2025-05-08 09:30:00'),
+(7, 8, 18, 'Còn từ 14:00 đến 15:00 ngày 15/05, bạn đặt nhé!', '2025-05-08 09:32:00'),
+(7, 18, 8, 'Cảm ơn anh, tôi đặt ngay!', '2025-05-08 09:34:00'),
+-- Cuộc trò chuyện 8 (customer8 và owner8)
+(8, 19, 9, 'Sân E2 có sẵn ngày 15/05 không?', '2025-05-08 09:35:00'),
+(8, 9, 19, 'Có từ 15:00 đến 16:00, bạn đặt đi nhé!', '2025-05-08 09:37:00'),
+-- Cuộc trò chuyện 9 (customer9 và owner9)
+(9, 20, 10, 'Sân F1 có thể đặt ngày 15/05 không?', '2025-05-08 09:40:00'),
+(9, 10, 20, 'Có từ 16:00 đến 17:00, bạn đặt ngay nhé!', '2025-05-08 09:42:00'),
+(9, 20, 10, 'Ok anh, tôi đặt ngay đây!', '2025-05-08 09:44:00'),
+-- Cuộc trò chuyện 10 (customer10 và owner10)
+(10, 21, 11, 'Sân F2 còn trống ngày 15/05 không?', '2025-05-08 09:45:00'),
+(10, 11, 21, 'Còn từ 17:00 đến 18:00, bạn đặt nhé!', '2025-05-08 09:47:00'),
+-- Cuộc trò chuyện 11 (customer11 và owner1)
+(11, 22, 2, 'Sân A1 có sẵn ngày 16/05 không?', '2025-05-08 09:50:00'),
+(11, 2, 22, 'Có từ 08:00 đến 09:00, bạn đặt đi nhé!', '2025-05-08 09:52:00'),
+(11, 22, 2, 'Cảm ơn anh, tôi đặt ngay!', '2025-05-08 09:54:00'),
+-- Cuộc trò chuyện 12 (customer12 và owner2)
+(12, 23, 3, 'Sân A2 còn trống ngày 16/05 không?', '2025-05-08 09:55:00'),
+(12, 3, 23, 'Có từ 09:00 đến 10:00, bạn đặt nhé!', '2025-05-08 09:57:00'),
+-- Cuộc trò chuyện 13 (customer13 và owner3)
+(13, 24, 4, 'Sân B1 có sẵn ngày 16/05 không?', '2025-05-08 10:00:00'),
+(13, 4, 24, 'Có từ 10:00 đến 11:00, bạn đặt đi nhé!', '2025-05-08 10:02:00'),
+(13, 24, 4, 'Ok, tôi đặt ngay đây!', '2025-05-08 10:04:00'),
+-- Cuộc trò chuyện 14 (customer14 và owner4)
+(14, 25, 5, 'Sân C1 có sẵn ngày 16/05 không?', '2025-05-08 10:05:00'),
+(14, 5, 25, 'Có từ 11:00 đến 12:00, bạn đặt nhé!', '2025-05-08 10:07:00'),
+-- Cuộc trò chuyện 15 (customer15 và owner5)
+(15, 26, 6, 'Sân C2 có sẵn ngày 16/05 không?', '2025-05-08 10:10:00'),
+(15, 6, 26, 'Có từ 12:00 đến 13:00, bạn đặt đi nhé!', '2025-05-08 10:12:00'),
+(15, 26, 6, 'Cảm ơn anh, tôi đặt ngay!', '2025-05-08 10:14:00'),
+-- Cuộc trò chuyện 16 (customer16 và owner6)
+(16, 27, 7, 'Sân D1 có sẵn ngày 16/05 không?', '2025-05-08 10:15:00'),
+(16, 7, 27, 'Có từ 13:00 đến 14:00, bạn đặt nhé!', '2025-05-08 10:17:00'),
+-- Cuộc trò chuyện 17 (customer17 và owner7)
+(17, 28, 8, 'Sân E1 có sẵn ngày 16/05 không?', '2025-05-08 10:20:00'),
+(17, 8, 28, 'Có từ 14:00 đến 15:00, bạn đặt đi nhé!', '2025-05-08 10:22:00'),
+(17, 28, 8, 'Ok, tôi đặt ngay đây!', '2025-05-08 10:24:00'),
+-- Cuộc trò chuyện 18 (customer18 và owner8)
+(18, 29, 9, 'Sân E2 có sẵn ngày 16/05 không?', '2025-05-08 10:25:00'),
+(18, 9, 29, 'Có từ 15:00 đến 16:00, bạn đặt nhé!', '2025-05-08 10:27:00'),
+-- Cuộc trò chuyện 19 (customer19 và owner9)
+(19, 30, 10, 'Sân F1 có sẵn ngày 16/05 không?', '2025-05-08 10:30:00'),
+(19, 10, 30, 'Có từ 16:00 đến 17:00, bạn đặt đi nhé!', '2025-05-08 10:32:00'),
+(19, 30, 10, 'Cảm ơn anh, tôi đặt ngay!', '2025-05-08 10:34:00'),
+-- Cuộc trò chuyện 20 (customer20 và owner10)
+(20, 31, 11, 'Sân F2 có sẵn ngày 16/05 không?', '2025-05-08 10:35:00'),
+(20, 11, 31, 'Có từ 17:00 đến 18:00, bạn đặt nhé!', '2025-05-08 10:37:00');
 
--- 50 thông báo cho tin nhắn mới
-INSERT INTO notifications (user_id, message, type, related_id) VALUES
-(2, 'New message from user 12', 'new_message_conversation', 1),
-(12, 'New message from user 2', 'new_message_conversation', 2),
-(3, 'New message from user 12', 'new_message_conversation', 3),
-(12, 'New message from user 3', 'new_message_conversation', 4),
-(4, 'New message from user 12', 'new_message_conversation', 5),
-(12, 'New message from user 4', 'new_message_conversation', 6),
-(5, 'New message from user 13', 'new_message_conversation', 7),
-(13, 'New message from user 5', 'new_message_conversation', 8),
-(6, 'New message from user 13', 'new_message_conversation', 9),
-(13, 'New message from user 6', 'new_message_conversation', 10),
-(7, 'New message from user 13', 'new_message_conversation', 11),
-(13, 'New message from user 7', 'new_message_conversation', 12),
-(8, 'New message from user 14', 'new_message_conversation', 13),
-(14, 'New message from user 8', 'new_message_conversation', 14),
-(9, 'New message from user 14', 'new_message_conversation', 15),
-(14, 'New message from user 9', 'new_message_conversation', 16),
-(10, 'New message from user 14', 'new_message_conversation', 17),
-(14, 'New message from user 10', 'new_message_conversation', 18),
-(2, 'New message from user 15', 'new_message_conversation', 19),
-(15, 'New message from user 2', 'new_message_conversation', 20),
-(3, 'New message from user 15', 'new_message_conversation', 21),
-(15, 'New message from user 3', 'new_message_conversation', 22),
-(4, 'New message from user 15', 'new_message_conversation', 23),
-(15, 'New message from user 4', 'new_message_conversation', 24),
-(5, 'New message from user 16', 'new_message_conversation', 25),
-(16, 'New message from user 5', 'new_message_conversation', 26),
-(6, 'New message from user 16', 'new_message_conversation', 27),
-(16, 'New message from user 6', 'new_message_conversation', 28),
-(7, 'New message from user 16', 'new_message_conversation', 29),
-(16, 'New message from user 7', 'new_message_conversation', 30),
-(8, 'New message from user 17', 'new_message_conversation', 31),
-(17, 'New message from user 8', 'new_message_conversation', 32),
-(9, 'New message from user 17', 'new_message_conversation', 33),
-(17, 'New message from user 9', 'new_message_conversation', 34),
-(10, 'New message from user 17', 'new_message_conversation', 35),
-(17, 'New message from user 10', 'new_message_conversation', 36),
-(2, 'New message from user 18', 'new_message_conversation', 37),
-(18, 'New message from user 2', 'new_message_conversation', 38),
-(3, 'New message from user 18', 'new_message_conversation', 39),
-(18, 'New message from user 3', 'new_message_conversation', 40),
-(4, 'New message from user 18', 'new_message_conversation', 41),
-(18, 'New message from user 4', 'new_message_conversation', 42),
-(5, 'New message from user 19', 'new_message_conversation', 43),
-(19, 'New message from user 5', 'new_message_conversation', 44),
-(6, 'New message from user 19', 'new_message_conversation', 45),
-(19, 'New message from user 6', 'new_message_conversation', 46),
-(7, 'New message from user 19', 'new_message_conversation', 47),
-(19, 'New message from user 7', 'new_message_conversation', 48),
-(8, 'New message from user 20', 'new_message_conversation', 49),
-(20, 'New message from user 8', 'new_message_conversation', 50);
+INSERT INTO notifications (user_id, message, type, related_id, is_read, created_at)
+VALUES 
+-- Thông báo cho customer1 (ID 12)
+(12, 'Yêu cầu đặt sân của bạn (ID #1) đã được xác nhận.', 'booking_confirmed', 1, 0, '2025-05-06 07:00:00'),
+(12, 'Yêu cầu đặt sân của bạn (ID #2) đã được xác nhận.', 'booking_confirmed', 2, 0, '2025-05-06 07:05:00'),
+(12, 'Yêu cầu đặt sân của bạn (ID #3) đã hoàn thành.', 'booking_confirmed', 3, 0, '2025-05-06 07:10:00'),
+-- Thông báo cho customer2 (ID 13)
+(13, 'Yêu cầu đặt sân của bạn (ID #4) đã được xác nhận.', 'booking_confirmed', 4, 0, '2025-05-06 07:15:00'),
+(13, 'Yêu cầu đặt sân của bạn (ID #5) đã bị hủy.', 'booking_confirmed', 5, 0, '2025-05-06 07:20:00'),
+(13, 'Yêu cầu đặt sân của bạn (ID #6) đã được xác nhận.', 'booking_confirmed', 6, 0, '2025-05-06 07:25:00'),
+-- Thông báo cho customer3 (ID 14)
+(14, 'Yêu cầu đặt sân của bạn (ID #7) đã hoàn thành.', 'booking_confirmed', 7, 0, '2025-05-06 07:30:00'),
+(14, 'Yêu cầu đặt sân của bạn (ID #8) đã được xác nhận.', 'booking_confirmed', 8, 0, '2025-05-06 07:35:00'),
+(14, 'Yêu cầu đặt sân của bạn (ID #9) đã được xác nhận.', 'booking_confirmed', 9, 0, '2025-05-06 07:40:00'),
+-- Thông báo cho customer4 (ID 15)
+(15, 'Yêu cầu đặt sân của bạn (ID #10) đã bị hủy.', 'booking_confirmed', 10, 0, '2025-05-06 07:45:00'),
+(15, 'Yêu cầu đặt sân của bạn (ID #11) đã được xác nhận.', 'booking_confirmed', 11, 0, '2025-05-06 07:50:00'),
+(15, 'Yêu cầu đặt sân của bạn (ID #12) đã hoàn thành.', 'booking_confirmed', 12, 0, '2025-05-06 07:55:00'),
+-- Thông báo cho customer5 (ID 16)
+(16, 'Yêu cầu đặt sân của bạn (ID #13) đã được xác nhận.', 'booking_confirmed', 13, 0, '2025-05-06 08:00:00'),
+(16, 'Yêu cầu đặt sân của bạn (ID #14) đã được xác nhận.', 'booking_confirmed', 14, 0, '2025-05-06 08:05:00'),
+(16, 'Yêu cầu đặt sân của bạn (ID #15) đã bị hủy.', 'booking_confirmed', 15, 0, '2025-05-06 08:10:00'),
+-- Thông báo cho customer6 (ID 17)
+(17, 'Yêu cầu đặt sân của bạn (ID #16) đã hoàn thành.', 'booking_confirmed', 16, 0, '2025-05-06 08:15:00'),
+(17, 'Yêu cầu đặt sân của bạn (ID #17) đã được xác nhận.', 'booking_confirmed', 17, 0, '2025-05-06 08:20:00'),
+(17, 'Yêu cầu đặt sân của bạn (ID #18) đã được xác nhận.', 'booking_confirmed', 18, 0, '2025-05-06 08:25:00'),
+-- Thông báo cho customer7 (ID 18)
+(18, 'Yêu cầu đặt sân của bạn (ID #19) đã bị hủy.', 'booking_confirmed', 19, 0, '2025-05-06 08:30:00'),
+(18, 'Yêu cầu đặt sân của bạn (ID #20) đã được xác nhận.', 'booking_confirmed', 20, 0, '2025-05-06 08:35:00'),
+(18, 'Yêu cầu đặt sân của bạn (ID #21) đã hoàn thành.', 'booking_confirmed', 21, 0, '2025-05-06 08:40:00'),
+-- Thông báo cho customer8 (ID 19)
+(19, 'Yêu cầu đặt sân của bạn (ID #22) đã được xác nhận.', 'booking_confirmed', 22, 0, '2025-05-06 08:45:00'),
+(19, 'Yêu cầu đặt sân của bạn (ID #23) đã được xác nhận.', 'booking_confirmed', 23, 0, '2025-05-06 08:50:00'),
+(19, 'Yêu cầu đặt sân của bạn (ID #24) đã bị hủy.', 'booking_confirmed', 24, 0, '2025-05-06 08:55:00'),
+-- Thông báo cho customer9 (ID 20)
+(20, 'Yêu cầu đặt sân của bạn (ID #25) đã hoàn thành.', 'booking_confirmed', 25, 0, '2025-05-06 09:00:00'),
+(20, 'Yêu cầu đặt sân của bạn (ID #26) đã được xác nhận.', 'booking_confirmed', 26, 0, '2025-05-06 09:05:00'),
+(20, 'Yêu cầu đặt sân của bạn (ID #27) đã được xác nhận.', 'booking_confirmed', 27, 0, '2025-05-06 09:10:00'),
+-- Thông báo cho customer10 (ID 21)
+(21, 'Yêu cầu đặt sân của bạn (ID #28) đã bị hủy.', 'booking_confirmed', 28, 0, '2025-05-06 09:15:00'),
+(21, 'Yêu cầu đặt sân của bạn (ID #29) đã được xác nhận.', 'booking_confirmed', 29, 0, '2025-05-06 09:20:00'),
+(21, 'Yêu cầu đặt sân của bạn (ID #30) đã hoàn thành.', 'booking_confirmed', 30, 0, '2025-05-06 09:25:00'),
+-- Thông báo cho customer11 (ID 22)
+(22, 'Yêu cầu đặt sân của bạn (ID #31) đã được xác nhận.', 'booking_confirmed', 31, 0, '2025-05-06 09:30:00'),
+(22, 'Yêu cầu đặt sân của bạn (ID #32) đã được xác nhận.', 'booking_confirmed', 32, 0, '2025-05-06 09:35:00'),
+(22, 'Yêu cầu đặt sân của bạn (ID #33) đã bị hủy.', 'booking_confirmed', 33, 0, '2025-05-06 09:40:00'),
+-- Thông báo cho customer12 (ID 23)
+(23, 'Yêu cầu đặt sân của bạn (ID #34) đã hoàn thành.', 'booking_confirmed', 34, 0, '2025-05-06 09:45:00'),
+(23, 'Yêu cầu đặt sân của bạn (ID #35) đã được xác nhận.', 'booking_confirmed', 35, 0, '2025-05-06 09:50:00'),
+(23, 'Yêu cầu đặt sân của bạn (ID #36) đã được xác nhận.', 'booking_confirmed', 36, 0, '2025-05-06 09:55:00'),
+-- Thông báo cho customer13 (ID 24)
+(24, 'Yêu cầu đặt sân của bạn (ID #37) đã bị hủy.', 'booking_confirmed', 37, 0, '2025-05-06 10:00:00'),
+(24, 'Yêu cầu đặt sân của bạn (ID #38) đã được xác nhận.', 'booking_confirmed', 38, 0, '2025-05-06 10:05:00'),
+(24, 'Yêu cầu đặt sân của bạn (ID #39) đã hoàn thành.', 'booking_confirmed', 39, 0, '2025-05-06 10:10:00'),
+-- Thông báo cho customer14 (ID 25)
+(25, 'Yêu cầu đặt sân của bạn (ID #40) đã được xác nhận.', 'booking_confirmed', 40, 0, '2025-05-06 10:15:00'),
+(25, 'Yêu cầu đặt sân của bạn (ID #41) đã được xác nhận.', 'booking_confirmed', 41, 0, '2025-05-06 10:20:00'),
+(25, 'Yêu cầu đặt sân của bạn (ID #42) đã bị hủy.', 'booking_confirmed', 42, 0, '2025-05-06 10:25:00'),
+-- Thông báo cho customer15 (ID 26)
+(26, 'Yêu cầu đặt sân của bạn (ID #43) đã hoàn thành.', 'booking_confirmed', 43, 0, '2025-05-06 10:30:00'),
+(26, 'Yêu cầu đặt sân của bạn (ID #44) đã được xác nhận.', 'booking_confirmed', 44, 0, '2025-05-06 10:35:00'),
+(26, 'Yêu cầu đặt sân của bạn (ID #45) đã được xác nhận.', 'booking_confirmed', 45, 0, '2025-05-06 10:40:00'),
+-- Thông báo cho customer16 (ID 27)
+(27, 'Yêu cầu đặt sân của bạn (ID #46) đã bị hủy.', 'booking_confirmed', 46, 0, '2025-05-06 10:45:00'),
+(27, 'Yêu cầu đặt sân của bạn (ID #47) đã được xác nhận.', 'booking_confirmed', 47, 0, '2025-05-06 10:50:00'),
+(27, 'Yêu cầu đặt sân của bạn (ID #48) đã hoàn thành.', 'booking_confirmed', 48, 0, '2025-05-06 10:55:00'),
+-- Thông báo cho customer17 (ID 28)
+(28, 'Yêu cầu đặt sân của bạn (ID #49) đã được xác nhận.', 'booking_confirmed', 49, 0, '2025-05-06 11:00:00'),
+(28, 'Yêu cầu đặt sân của bạn (ID #50) đã bị hủy.', 'booking_confirmed', 50, 0, '2025-05-06 11:05:00');
 
+INSERT INTO notifications (user_id, message, type, related_id, is_read, created_at)
+VALUES 
+-- Thông báo tin nhắn cho customer1 (ID 12)
+(12, 'Bạn có tin nhắn mới từ chủ sân liên quan đến sân bóng A1', 'new_message_conversation', 1, 0, '2025-05-08 09:02:00'),
+(2, 'Bạn có tin nhắn mới từ khách hàng liên quan đến sân bóng A1', 'new_message_conversation', 2, 0, '2025-05-08 09:04:00'),
+(12, 'Bạn có tin nhắn mới từ chủ sân liên quan đến sân bóng A1', 'new_message_conversation', 3, 0, '2025-05-08 09:07:00'),
+-- Thông báo tin nhắn cho customer2 (ID 13)
+(13, 'Bạn có tin nhắn mới từ chủ sân liên quan đến sân bóng A2', 'new_message_conversation', 4, 0, '2025-05-08 09:07:00'),
+(3, 'Bạn có tin nhắn mới từ khách hàng liên quan đến sân bóng A2', 'new_message_conversation', 5, 0, '2025-05-08 09:12:00'),
+-- Thông báo tin nhắn cho customer3 (ID 14)
+(14, 'Bạn có tin nhắn mới từ chủ sân liên quan đến sân bóng B1', 'new_message_conversation', 6, 0, '2025-05-08 09:12:00'),
+(4, 'Bạn có tin nhắn mới từ khách hàng liên quan đến sân bóng B1', 'new_message_conversation', 7, 0, '2025-05-08 09:14:00'),
+(14, 'Bạn có tin nhắn mới từ chủ sân liên quan đến sân bóng B1', 'new_message_conversation', 8, 0, '2025-05-08 09:17:00'),
+-- Thông báo tin nhắn cho customer4 (ID 15)
+(15, 'Bạn có tin nhắn mới từ chủ sân liên quan đến sân bóng C1', 'new_message_conversation', 9, 0, '2025-05-08 09:17:00'),
+(5, 'Bạn có tin nhắn mới từ khách hàng liên quan đến sân bóng C1', 'new_message_conversation', 10, 0, '2025-05-08 09:22:00'),
+-- Thông báo tin nhắn cho customer5 (ID 16)
+(16, 'Bạn có tin nhắn mới từ chủ sân liên quan đến sân bóng C2', 'new_message_conversation', 11, 0, '2025-05-08 09:22:00'),
+(6, 'Bạn có tin nhắn mới từ khách hàng liên quan đến sân bóng C2', 'new_message_conversation', 12, 0, '2025-05-08 09:24:00'),
+(16, 'Bạn có tin nhắn mới từ chủ sân liên quan đến sân bóng C2', 'new_message_conversation', 13, 0, '2025-05-08 09:27:00'),
+-- Thông báo tin nhắn cho customer6 (ID 17)
+(17, 'Bạn có tin nhắn mới từ chủ sân liên quan đến sân bóng D1', 'new_message_conversation', 14, 0, '2025-05-08 09:27:00'),
+(7, 'Bạn có tin nhắn mới từ khách hàng liên quan đến sân bóng D1', 'new_message_conversation', 15, 0, '2025-05-08 09:32:00'),
+-- Thông báo tin nhắn cho customer7 (ID 18)
+(18, 'Bạn có tin nhắn mới từ chủ sân liên quan đến sân bóng E1', 'new_message_conversation', 16, 0, '2025-05-08 09:32:00'),
+(8, 'Bạn có tin nhắn mới từ khách hàng liên quan đến sân bóng E1', 'new_message_conversation', 17, 0, '2025-05-08 09:34:00'),
+(18, 'Bạn có tin nhắn mới từ chủ sân liên quan đến sân bóng E1', 'new_message_conversation', 18, 0, '2025-05-08 09:37:00'),
+-- Thông báo tin nhắn cho customer8 (ID 19)
+(19, 'Bạn có tin nhắn mới từ chủ sân liên quan đến sân bóng E2', 'new_message_conversation', 19, 0, '2025-05-08 09:37:00'),
+(9, 'Bạn có tin nhắn mới từ khách hàng liên quan đến sân bóng E2', 'new_message_conversation', 20, 0, '2025-05-08 09:42:00'),
+-- Thông báo tin nhắn cho customer9 (ID 20)
+(20, 'Bạn có tin nhắn mới từ chủ sân liên quan đến sân bóng F1', 'new_message_conversation', 21, 0, '2025-05-08 09:42:00'),
+(10, 'Bạn có tin nhắn mới từ khách hàng liên quan đến sân bóng F1', 'new_message_conversation', 22, 0, '2025-05-08 09:44:00'),
+(20, 'Bạn có tin nhắn mới từ chủ sân liên quan đến sân bóng F1', 'new_message_conversation', 23, 0, '2025-05-08 09:47:00'),
+-- Thông báo tin nhắn cho customer10 (ID 21)
+(21, 'Bạn có tin nhắn mới từ chủ sân liên quan đến sân bóng F2', 'new_message_conversation', 24, 0, '2025-05-08 09:47:00'),
+(11, 'Bạn có tin nhắn mới từ khách hàng liên quan đến sân bóng F2', 'new_message_conversation', 25, 0, '2025-05-08 09:52:00'),
+-- Thông báo tin nhắn cho customer11 (ID 22)
+(22, 'Bạn có tin nhắn mới từ chủ sân liên quan đến sân bóng A1', 'new_message_conversation', 26, 0, '2025-05-08 09:52:00'),
+(2, 'Bạn có tin nhắn mới từ khách hàng liên quan đến sân bóng A1', 'new_message_conversation', 27, 0, '2025-05-08 09:54:00'),
+(22, 'Bạn có tin nhắn mới từ chủ sân liên quan đến sân bóng A1', 'new_message_conversation', 28, 0, '2025-05-08 09:57:00'),
+-- Thông báo tin nhắn cho customer12 (ID 23)
+(23, 'Bạn có tin nhắn mới từ chủ sân liên quan đến sân bóng A2', 'new_message_conversation', 29, 0, '2025-05-08 09:57:00'),
+(3, 'Bạn có tin nhắn mới từ khách hàng liên quan đến sân bóng A2', 'new_message_conversation', 30, 0, '2025-05-08 10:02:00'),
+-- Thông báo tin nhắn cho customer13 (ID 24)
+(24, 'Bạn có tin nhắn mới từ chủ sân liên quan đến sân bóng B1', 'new_message_conversation', 31, 0, '2025-05-08 10:02:00'),
+(4, 'Bạn có tin nhắn mới từ khách hàng liên quan đến sân bóng B1', 'new_message_conversation', 32, 0, '2025-05-08 10:04:00'),
+(24, 'Bạn có tin nhắn mới từ chủ sân liên quan đến sân bóng B1', 'new_message_conversation', 33, 0, '2025-05-08 10:07:00'),
+-- Thông báo tin nhắn cho customer14 (ID 25)
+(25, 'Bạn có tin nhắn mới từ chủ sân liên quan đến sân bóng C1', 'new_message_conversation', 34, 0, '2025-05-08 10:07:00'),
+(5, 'Bạn có tin nhắn mới từ khách hàng liên quan đến sân bóng C1', 'new_message_conversation', 35, 0, '2025-05-08 10:12:00'),
+-- Thông báo tin nhắn cho customer15 (ID 26)
+(26, 'Bạn có tin nhắn mới từ chủ sân liên quan đến sân bóng C2', 'new_message_conversation', 36, 0, '2025-05-08 10:12:00'),
+(6, 'Bạn có tin nhắn mới từ khách hàng liên quan đến sân bóng C2', 'new_message_conversation', 37, 0, '2025-05-08 10:14:00'),
+(26, 'Bạn có tin nhắn mới từ chủ sân liên quan đến sân bóng C2', 'new_message_conversation', 38, 0, '2025-05-08 10:17:00'),
+-- Thông báo tin nhắn cho customer16 (ID 27)
+(27, 'Bạn có tin nhắn mới từ chủ sân liên quan đến sân bóng D1', 'new_message_conversation', 39, 0, '2025-05-08 10:17:00'),
+(7, 'Bạn có tin nhắn mới từ khách hàng liên quan đến sân bóng D1', 'new_message_conversation', 40, 0, '2025-05-08 10:22:00'),
+-- Thông báo tin nhắn cho customer17 (ID 28)
+(28, 'Bạn có tin nhắn mới từ chủ sân liên quan đến sân bóng E1', 'new_message_conversation', 41, 0, '2025-05-08 10:22:00'),
+(8, 'Bạn có tin nhắn mới từ khách hàng liên quan đến sân bóng E1', 'new_message_conversation', 42, 0, '2025-05-08 10:24:00'),
+(28, 'Bạn có tin nhắn mới từ chủ sân liên quan đến sân bóng E1', 'new_message_conversation', 43, 0, '2025-05-08 10:27:00'),
+-- Thông báo tin nhắn cho customer18 (ID 29)
+(29, 'Bạn có tin nhắn mới từ chủ sân liên quan đến sân bóng E2', 'new_message_conversation', 44, 0, '2025-05-08 10:27:00'),
+(9, 'Bạn có tin nhắn mới từ khách hàng liên quan đến sân bóng E2', 'new_message_conversation', 45, 0, '2025-05-08 10:32:00'),
+-- Thông báo tin nhắn cho customer19 (ID 30)
+(30, 'Bạn có tin nhắn mới từ chủ sân liên quan đến sân bóng F1', 'new_message_conversation', 46, 0, '2025-05-08 10:32:00'),
+(10, 'Bạn có tin nhắn mới từ khách hàng liên quan đến sân bóng F1', 'new_message_conversation', 47, 0, '2025-05-08 10:34:00'),
+(30, 'Bạn có tin nhắn mới từ chủ sân liên quan đến sân bóng F1', 'new_message_conversation', 48, 0, '2025-05-08 10:37:00'),
+-- Thông báo tin nhắn cho customer20 (ID 31)
+(31, 'Bạn có tin nhắn mới từ chủ sân liên quan đến sân bóng F2', 'new_message_conversation', 49, 0, '2025-05-08 10:37:00'),
+(11, 'Bạn có tin nhắn mới từ khách hàng liên quan đến sân bóng F2', 'new_message_conversation', 50, 0, '2025-05-08 10:42:00');
 
+INSERT INTO revenues (owner_id, booking_id, field_id, amount, created_at)
+VALUES 
+-- Booking 3 (field 1, owner 2)
+(2, 3, 1, 300000 + (10000 * 3), '2025-05-06 07:10:00'),  -- total_price + nước suối (10,000 x 3)
+-- Booking 7 (field 7, owner 8)
+(8, 7, 7, 310000 + (15000 * 2), '2025-05-06 07:30:00'),  -- total_price + nước ngọt (15,000 x 2)
+-- Booking 12 (field 2, owner 3)
+(3, 12, 2, 350000 + (10000 * 2), '2025-05-06 07:55:00'), -- total_price + nước suối (10,000 x 2)
+-- Booking 16 (field 6, owner 7)
+(7, 16, 6, 410000 + (10000 * 1), '2025-05-06 08:15:00'), -- total_price + nước suối (10,000 x 1)
+-- Booking 21 (field 1, owner 2)
+(2, 21, 1, 300000 + (10000 * 3), '2025-05-06 08:40:00'), -- total_price + nước suối (10,000 x 3)
+-- Booking 25 (field 5, owner 6)
+(6, 25, 5, 370000 + (15000 * 1), '2025-05-06 09:00:00'), -- total_price + nước ngọt (15,000 x 1)
+-- Booking 30 (field 10, owner 11)
+(11, 30, 10, 420000 + (10000 * 3), '2025-05-06 09:25:00'), -- total_price + nước suối (10,000 x 3)
+-- Booking 34 (field 4, owner 5)
+(5, 34, 4, 320000 + (10000 * 1), '2025-05-06 09:45:00'), -- total_price + nước suối (10,000 x 1)
+-- Booking 39 (field 9, owner 10)
+(10, 39, 9, 390000 + (15000 * 2), '2025-05-06 10:10:00'), -- total_price + nước ngọt (15,000 x 2)
+-- Booking 43 (field 3, owner 4)
+(4, 43, 3, 400000 + (15000 * 1), '2025-05-06 10:30:00'), -- total_price + nước ngọt (15,000 x 1)
+-- Booking 48 (field 8, owner 9)
+(9, 48, 8, 360000 + (60000 * 1), '2025-05-06 10:55:00'); -- total_price + bóng đá (60,000 x 1)

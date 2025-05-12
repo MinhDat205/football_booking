@@ -195,16 +195,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['book_field'])) {
                 // Lấy danh sách sản phẩm đã chọn
                 $selected_products = [];
                 if (isset($_POST['selected_products']) && is_array($_POST['selected_products'])) {
-                    foreach ($_POST['selected_products'] as $product_id) {
-                        $stmt = $pdo->prepare("SELECT id, name, price FROM products WHERE id = ? AND field_id = ?");
-                        $stmt->execute([(int)$product_id, $field_id]);
-                        $product = $stmt->fetch(PDO::FETCH_ASSOC);
-                        if ($product) {
-                            $selected_products[] = [
-                                'product_id' => $product['id'],
-                                'name' => $product['name'],
-                                'price' => $product['price']
-                            ];
+                    $quantities = isset($_POST['quantities']) ? $_POST['quantities'] : [];
+                    foreach ($_POST['selected_products'] as $index => $product_id) {
+                        $quantity = isset($quantities[$index]) ? (int)$quantities[$index] : 0;
+                        if ($quantity > 0) {
+                            $stmt = $pdo->prepare("SELECT id, name, price FROM products WHERE id = ? AND field_id = ?");
+                            $stmt->execute([(int)$product_id, $field_id]);
+                            $product = $stmt->fetch(PDO::FETCH_ASSOC);
+                            if ($product) {
+                                $selected_products[] = [
+                                    'product_id' => $product['id'],
+                                    'name' => $product['name'],
+                                    'price' => $product['price'],
+                                    'quantity' => $quantity
+                                ];
+                                $total_price += $product['price'] * $quantity;
+                            }
                         }
                     }
                 }
@@ -397,6 +403,12 @@ require_once 'includes/header.php';
         color: #e74c3c;
         font-size: 0.95rem;
     }
+    /* Số lượng sản phẩm */
+    .quantity-input {
+        width: 70px;
+        display: inline-block;
+        margin-left: 10px;
+    }
     /* Responsive */
     @media (max-width: 768px) {
         .section-title {
@@ -438,12 +450,14 @@ require_once 'includes/header.php';
         .product-card img {
             max-height: 80px;
         }
+        .quantity-input {
+            width: 60px;
+        }
     }
 </style>
 
 <section class="search py-3">
     <div class="container">
-        <h2 class="section-title text-center">Trang Chủ</h2>
 
         <!-- Form tìm kiếm -->
         <form method="GET" class="row g-3 align-items-end search-form">
@@ -451,12 +465,6 @@ require_once 'includes/header.php';
                 <div class="input-group">
                     <span class="input-group-text"><i class="bi bi-geo-alt-fill"></i></span>
                     <input type="text" name="location" class="form-control" placeholder="Nhập vị trí" value="<?php echo htmlspecialchars($location); ?>">
-                </div>
-            </div>
-            <div class="col-md-2 col-sm-6">
-                <div class="input-group">
-                    <span class="input-group-text"><i class="bi bi-calendar-event"></i></span>
-                    <input type="date" name="date" class="form-control" value="<?php echo htmlspecialchars($date); ?>">
                 </div>
             </div>
             <div class="col-md-2 col-sm-6">
@@ -612,7 +620,7 @@ require_once 'includes/header.php';
                                             <hr>
                                             <h6 class="mb-3">Chọn sản phẩm đi kèm:</h6>
                                             <div class="row">
-                                                <?php foreach ($products[$field['id']] as $product): ?>
+                                                <?php foreach ($products[$field['id']] as $index => $product): ?>
                                                     <div class="col-md-4 mb-3">
                                                         <div class="card product-card">
                                                             <img src="assets/img/<?php echo htmlspecialchars($product['image'] ?: 'default_product.jpg'); ?>" class="card-img-top" alt="<?php echo htmlspecialchars($product['name']); ?>">
@@ -625,6 +633,7 @@ require_once 'includes/header.php';
                                                                     <label class="form-check-label" for="product_<?php echo $product['id']; ?>">
                                                                         Chọn sản phẩm
                                                                     </label>
+                                                                    <input type="number" name="quantities[]" min="0" value="0" class="form-control quantity-input" id="quantity_<?php echo $product['id']; ?>">
                                                                 </div>
                                                             </div>
                                                         </div>
