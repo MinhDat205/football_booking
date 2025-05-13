@@ -45,8 +45,37 @@ if (isset($_SESSION['user_id'])) {
     $notifications = $stmt->fetchAll(PDO::FETCH_ASSOC);
 }
 
+// Xác định liên kết cho logo dựa trên loại tài khoản
+$logo_link = '/football_booking/search.php'; // Mặc định cho người dùng chưa đăng nhập hoặc admin
+if (isset($_SESSION['account_type'])) {
+    if ($_SESSION['account_type'] === 'customer') {
+        $logo_link = '/football_booking/search.php';
+    } elseif ($_SESSION['account_type'] === 'owner') {
+        $logo_link = '/football_booking/manage_bookings.php';
+    }
+}
+
 // Lấy tên file hiện tại từ URL để làm nổi bật mục active
 $current_page = basename(parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH));
+
+// Tự động chuyển hướng chủ sân đến manage_bookings.php
+if (isset($_SESSION['account_type']) && $_SESSION['account_type'] === 'owner') {
+    $owner_pages = [
+        'manage_bookings.php',
+        'manage_orders.php',
+        'history.php',
+        'chat.php',
+        'manage_field.php',
+        'manage_products.php',
+        'revenue.php',
+        'profile.php',
+        'logout.php'
+    ];
+    if (!in_array($current_page, $owner_pages)) {
+        header('Location: /football_booking/manage_bookings.php');
+        exit;
+    }
+}
 ?>
 
 <!DOCTYPE html>
@@ -72,11 +101,26 @@ $current_page = basename(parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH));
             background: #1e3c72;
             padding: 10px 0;
         }
+        header .logo {
+            display: flex;
+            align-items: center;
+            gap: 12px; /* Tăng khoảng cách giữa logo và chữ */
+        }
+        header .logo img {
+            height: 60px; /* Tăng kích thước logo trên desktop */
+            width: auto;
+        }
         header .logo h3 {
             font-weight: 600;
             color: #fff;
             margin: 0;
-            font-size: 1.5rem;
+            font-size: 1.8rem; /* Tăng kích thước chữ để cân đối với logo */
+        }
+        header .logo a {
+            text-decoration: none; /* Bỏ gạch chân liên kết */
+            display: flex;
+            align-items: center;
+            gap: 12px;
         }
         header .btn-outline-light {
             border-radius: 5px;
@@ -324,6 +368,17 @@ $current_page = basename(parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH));
             .table thead th, .table td {
                 padding: 8px;
             }
+            header .logo img {
+                height: 60px; /* Kích thước logo nhỏ trên thiết bị di động */
+                width: auto;
+            }
+        }
+        /* Chỉ áp dụng cho màn hình rộng (máy tính, tablet lớn) */
+        @media (min-width: 1024px) {
+            header .logo img {
+                height: 120px; /* Tăng kích thước logo trên máy tính */
+                width: auto;
+            }
         }
     </style>
 </head>
@@ -337,7 +392,10 @@ $current_page = basename(parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH));
                     </div>
                 <?php endif; ?>
                 <div class="logo">
-                    <h3>Football Booking</h3>
+                    <a href="<?php echo $logo_link; ?>">
+                        <img src="/football_booking/assets/img/logo.png" alt="Football Booking Logo">
+                        <h3>Football Booking</h3>
+                    </a>
                 </div>
             </div>
             <div class="d-flex align-items-center gap-2">
@@ -380,6 +438,8 @@ $current_page = basename(parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH));
                                             }
                                         } elseif ($notification['type'] === 'booking_confirmed') {
                                             $notification_link = '/football_booking/history.php?booking_id=' . $notification['related_id'];
+                                        } elseif ($notification['type'] === 'order_confirmed' || $notification['type'] === 'order_rejected' || $notification['type'] === 'order_completed') {
+                                            $notification_link = '/football_booking/my_orders.php';
                                         }
                                         ?>
                                         <a class="dropdown-item <?php echo $notification['is_read'] ? '' : 'fw-bold'; ?>" href="<?php echo $notification_link; ?>">
@@ -420,11 +480,23 @@ $current_page = basename(parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH));
                         <i class="bi bi-house-door-fill"></i> Trang chủ
                     </a>
                 </li>
-                <li class="nav-item">
+
+                                <li class="nav-item">
                     <a class="nav-link <?php echo $current_page == 'history.php' ? 'active' : ''; ?>" href="/football_booking/history.php">
                         <i class="bi bi-clock-history"></i> Lịch sử đặt sân
                     </a>
                 </li>
+                <li class="nav-item">
+                    <a class="nav-link <?php echo $current_page == 'shop.php' ? 'active' : ''; ?>" href="/football_booking/shop.php">
+                        <i class="bi bi-cart-fill"></i> Mua sản phẩm
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link <?php echo $current_page == 'my_orders.php' ? 'active' : ''; ?>" href="/football_booking/my_orders.php">
+                        <i class="bi bi-box-seam"></i> Đơn đã đặt
+                    </a>
+                </li>
+
                 <li class="nav-item">
                     <a class="nav-link <?php echo $current_page == 'chat.php' ? 'active' : ''; ?>" href="/football_booking/chat.php">
                         <i class="bi bi-chat-dots-fill"></i> Chat
@@ -443,15 +515,16 @@ $current_page = basename(parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH));
                     </a>
                 </li>
                 <li class="nav-item">
+                    <a class="nav-link <?php echo $current_page == 'manage_orders.php' ? 'active' : ''; ?>" href="/football_booking/manage_orders.php">
+                        <i class="bi bi-box-seam"></i> Đơn đặt sản phẩm
+                    </a>
+                </li>
+                <li class="nav-item">
                     <a class="nav-link <?php echo $current_page == 'history.php' ? 'active' : ''; ?>" href="/football_booking/history.php">
                         <i class="bi bi-clock-history"></i> Lịch sử đặt sân
                     </a>
                 </li>
-                <li class="nav-item">
-                    <a class="nav-link <?php echo $current_page == 'chat.php' ? 'active' : ''; ?>" href="/football_booking/chat.php">
-                        <i class="bi bi-chat-dots-fill"></i> Chat
-                    </a>
-                </li>
+               
                 <li class="nav-item">
                     <a class="nav-link <?php echo $current_page == 'manage_field.php' ? 'active' : ''; ?>" href="/football_booking/manage_field.php">
                         <i class="bi bi-gear-fill"></i> Quản lý sân
@@ -462,9 +535,16 @@ $current_page = basename(parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH));
                         <i class="bi bi-box"></i> Quản lý sản phẩm
                     </a>
                 </li>
+
+                 <li class="nav-item">
+                    <a class="nav-link <?php echo $current_page == 'chat.php' ? 'active' : ''; ?>" href="/football_booking/chat.php">
+                        <i class="bi bi-chat-dots-fill"></i> Chat
+                    </a>
+                </li>
+
                 <li class="nav-item">
                     <a class="nav-link <?php echo $current_page == 'revenue.php' ? 'active' : ''; ?>" href="/football_booking/revenue.php">
-                        <i class="bi bi-currency-dollar"></i> Theo dõi thu nhập
+                        <i class="bi bi-currency-dollar"></i> Theo dõi Thu nhập 
                     </a>
                 </li>
                 <li class="nav-item">

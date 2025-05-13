@@ -1,6 +1,5 @@
 <?php
 require_once 'includes/config.php';
-require_once 'includes/header.php';
 require_once 'includes/csrf.php';
 
 if (!isset($_SESSION['user_id'])) {
@@ -9,8 +8,7 @@ if (!isset($_SESSION['user_id'])) {
 }
 
 $field_id = isset($_GET['field_id']) ? (int)$_GET['field_id'] : 0;
-$error = '';
-$success = '';
+$booking_id = isset($_GET['booking_id']) ? (int)$_GET['booking_id'] : 0; // Nhận booking_id từ URL
 $csrf_token = generateCsrfToken();
 
 if ($field_id === 0) {
@@ -26,62 +24,64 @@ if (!$field) {
     exit;
 }
 
+// Kiểm tra booking_id có hợp lệ không (nếu có)
+if ($booking_id !== 0) {
+    $stmt = $pdo->prepare("SELECT * FROM bookings WHERE id = ? AND field_id = ? AND user_id = ? AND status = 'completed'");
+    $stmt->execute([$booking_id, $field_id, $_SESSION['user_id']]);
+    $booking = $stmt->fetch(PDO::FETCH_ASSOC);
+    if (!$booking) {
+        header('Location: search.php');
+        exit;
+    }
+}
+
 $stmt = $pdo->prepare("SELECT r.*, u.full_name FROM reviews r JOIN users u ON r.user_id = u.id WHERE r.field_id = ?");
 $stmt->execute([$field_id]);
 $reviews = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
+// Xử lý gửi đánh giá
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $token = isset($_POST['csrf_token']) ? $_POST['csrf_token'] : '';
 
     if (!verifyCsrfToken($token)) {
-        $error = 'Yêu cầu không hợp lệ. Vui lòng thử lại.';
+        $_SESSION['error'] = 'Yêu cầu không hợp lệ. Vui lòng thử lại.';
     } elseif ($_SESSION['account_type'] !== 'customer') {
-        $error = 'Chỉ khách hàng mới có thể gửi đánh giá.';
+        $_SESSION['error'] = 'Chỉ khách hàng mới có thể gửi đánh giá.';
     } else {
         $rating = (int)$_POST['rating'];
         $comment = trim($_POST['comment']);
 
         if ($rating < 1 || $rating > 5) {
-            $error = 'Điểm đánh giá phải từ 1 đến 5 sao.';
+            $_SESSION['error'] = 'Điểm đánh giá phải từ 1 đến 5 sao.';
         } elseif (strlen($comment) > 200) {
-            $error = 'Bình luận không được vượt quá 200 ký tự.';
+            $_SESSION['error'] = 'Bình luận không được vượt quá 200 ký tự.';
         } elseif (empty($comment)) {
-            $error = 'Vui lòng nhập bình luận.';
+            $_SESSION['error'] = 'Vui lòng nhập bình luận.';
         } else {
-            $stmt = $pdo->prepare("INSERT INTO reviews (user_id, field_id, rating, comment) VALUES (?, ?, ?, ?)");
-            $stmt->execute([$_SESSION['user_id'], $field_id, $rating, $comment]);
-            $success = 'Đánh giá của bạn đã được gửi!';
+            $stmt = $pdo->prepare("INSERT INTO reviews (user_id, field_id, booking_id, rating, comment) VALUES (?, ?, ?, ?, ?)");
+            $stmt->execute([$_SESSION['user_id'], $field_id, $booking_id ?: null, $rating, $comment]);
+            $_SESSION['success'] = 'Đánh giá của bạn đã được gửi!';
             header('Location: review.php?field_id=' . $field_id);
             exit;
         }
     }
 }
+
+// Sau khi xử lý logic, gọi header.php và hiển thị giao diện
+require_once 'includes/header.php';
+
+// Lấy thông báo từ session
+$error = isset($_SESSION['error']) ? $_SESSION['error'] : '';
+$success = isset($_SESSION['success']) ? $_SESSION['success'] : '';
+unset($_SESSION['error']);
+unset($_SESSION['success']);
 ?>
 
 <section class="reviews py-5">
     <div class="container">
         <h2 class="text-center mb-4">Đánh Giá Sân: <?php echo htmlspecialchars($field['name']); ?></h2>
 
-        <!-- Danh sách đánh giá -->
-        <div class="mb-5">
-            <h4>Danh Sách Đánh Giá</h4>
-            <?php if (empty($reviews)): ?>
-                <p>Chưa có đánh giá nào cho sân này.</p>
-            <?php else: ?>
-                <?php foreach ($reviews as $review): ?>
-                    <div class="card mb-3">
-                        <div class="card-body">
-                            <h6 class="card-title"><?php echo htmlspecialchars($review['full_name']); ?> - <?php echo $review['rating']; ?> sao</h6>
-                            <p class="card-text"><?php echo htmlspecialchars($review['comment']); ?></p>
-                            <p class="card-text"><small class="text-muted"><?php echo $review['created_at']; ?></small></p>
-                        </div>
-                    </div>
-                <?php endforeach; ?>
-            <?php endif; ?>
-        </div>
-
         <!-- Form gửi đánh giá -->
-        <h4>Gửi Đánh Giá Của Bạn</h4>
         <?php if ($error): ?>
             <div class="alert alert-danger"><?php echo $error; ?></div>
         <?php endif; ?>
@@ -110,5 +110,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         </form>
     </div>
 </section>
+
+<section class="reviews py-5">
+    <div class="container">
+        <h2 class="text-center mb-4">Đánh Giá Sân: <?php echo htmlspecialchars($field['name']); ?></h2>
+
+        <!-- Danh sách đánh giá -->
+        <div class="mb-5">
+            <h4>Danh Sách Đánh Giá</h4>
+            <?php if (empty($reviews)): ?>
+                <p>Chưa có đánh giá nào cho sân này.</p>
+            <?php else: ?>
+                <?php foreach ($reviews as $review): ?>
+                    <div class="card mb-3">
+                        <div class="card-body">
+                            <h6 class="card-title"><?php echo htmlspecialchars($review['full_name']); ?> - <?php echo $review['rating']; ?> sao</h6>
+                            <p class="card-text"><?php echo htmlspecialchars($review['comment']); ?></p>
+                            <p class="card-text"><small class="text-muted"><?php echo $review['created_at']; ?></small></p>
+                        </div>
+                    </div>
+                <?php endforeach; ?>
+            <?php endif; ?>
+        </div>
+
 
 <?php require_once 'includes/footer.php'; ?>

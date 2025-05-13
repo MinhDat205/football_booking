@@ -64,70 +64,13 @@ $fields = $stmt->fetchAll(PDO::FETCH_ASSOC);
 $products = [];
 $field_images = [];
 foreach ($fields as $field) {
-    // Lấy sản phẩm
     $stmt = $pdo->prepare("SELECT * FROM products WHERE field_id = ?");
     $stmt->execute([$field['id']]);
     $products[$field['id']] = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-    // Lấy hình ảnh
     $stmt = $pdo->prepare("SELECT * FROM field_images WHERE field_id = ?");
     $stmt->execute([$field['id']]);
     $field_images[$field['id']] = $stmt->fetchAll(PDO::FETCH_ASSOC);
-}
-
-// Hàm lấy dữ liệu thời tiết
-function getWeather($city, $date) {
-    $api_key = 'your_openweathermap_api_key_here'; // Thay bằng API Key của bạn
-    $url = "http://api.openweathermap.org/data/2.5/forecast?q=" . urlencode($city) . "&appid=" . $api_key . "&units=metric";
-
-    $response = @file_get_contents($url);
-    if ($response === FALSE) {
-        return ['error' => 'Không thể lấy dữ liệu thời tiết.'];
-    }
-
-    $data = json_decode($response, true);
-    if (!isset($data['list'])) {
-        return ['error' => 'Dữ liệu thời tiết không khả dụng.'];
-    }
-
-    // Tìm dữ liệu thời tiết gần nhất với ngày đặt sân
-    $target_timestamp = strtotime($date);
-    $closest_weather = null;
-    $min_diff = PHP_INT_MAX;
-
-    foreach ($data['list'] as $forecast) {
-        $forecast_timestamp = $forecast['dt'];
-        $diff = abs($target_timestamp - $forecast_timestamp);
-        if ($diff < $min_diff) {
-            $min_diff = $diff;
-            $closest_weather = $forecast;
-        }
-    }
-
-    if ($closest_weather) {
-        $weather = [
-            'description' => $closest_weather['weather'][0]['description'],
-            'temperature' => $closest_weather['main']['temp'],
-            'humidity' => $closest_weather['main']['humidity'],
-            'wind_speed' => $closest_weather['wind']['speed']
-        ];
-
-        // Gợi ý vật dụng dựa trên thời tiết
-        $suggestions = [];
-        if (stripos($weather['description'], 'rain') !== false) {
-            $suggestions[] = "Mang giày chống trượt và áo mưa vì trời có thể mưa.";
-        }
-        if ($weather['temperature'] > 30) {
-            $suggestions[] = "Mang nước uống và mũ vì trời khá nóng.";
-        } elseif ($weather['temperature'] < 15) {
-            $suggestions[] = "Mang áo ấm vì trời có thể lạnh.";
-        }
-        $weather['suggestions'] = $suggestions;
-
-        return $weather;
-    }
-
-    return ['error' => 'Không tìm thấy dữ liệu thời tiết cho ngày này.'];
 }
 
 // Lấy thông báo từ session nếu có
@@ -139,7 +82,7 @@ unset($_SESSION['modal_success']);
 // Xử lý đặt sân
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['book_field'])) {
     $token = isset($_POST['csrf_token']) ? $_POST['csrf_token'] : '';
-    $modal_error = ''; // Khởi tạo biến $modal_error
+    $modal_error = '';
 
     if (!verifyCsrfToken($token)) {
         $modal_error = 'Yêu cầu không hợp lệ. Vui lòng thử lại.';
@@ -153,14 +96,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['book_field'])) {
         $end_time = $_POST['end_time'];
         $price_per_hour = (float)$_POST['price_per_hour'];
 
-        // Chuẩn hóa thời gian (thêm số 0 nếu cần)
         $start_time = sprintf("%02d:%02d", ...explode(':', $start_time));
         $end_time = sprintf("%02d:%02d", ...explode(':', $end_time));
 
-        // Ghi log để kiểm tra dữ liệu đầu vào
-        error_log("Booking attempt: field_id=$field_id, booking_date=$booking_date, start_time=$start_time, end_time=$end_time, price_per_hour=$price_per_hour");
-
-        // Kiểm tra dữ liệu đặt sân
         if (empty($booking_date)) {
             $modal_error = 'Vui lòng chọn ngày đặt sân.';
         } elseif (empty($start_time) || empty($end_time)) {
@@ -174,7 +112,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['book_field'])) {
         } elseif ($price_per_hour <= 0) {
             $modal_error = 'Giá sân không hợp lệ.';
         } else {
-            // Kiểm tra xem sân đã được đặt trong khung giờ này chưa
             $stmt = $pdo->prepare("SELECT COUNT(*) FROM bookings 
                                    WHERE field_id = ? 
                                    AND booking_date = ? 
@@ -192,7 +129,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['book_field'])) {
                 $hours = (strtotime($end_time) - strtotime($start_time)) / 3600;
                 $total_price = $price_per_hour * $hours;
 
-                // Lấy danh sách sản phẩm đã chọn
                 $selected_products = [];
                 if (isset($_POST['selected_products']) && is_array($_POST['selected_products'])) {
                     $quantities = isset($_POST['quantities']) ? $_POST['quantities'] : [];
@@ -214,16 +150,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['book_field'])) {
                         }
                     }
                 }
-                $selected_products_json = json_encode($selected_products ?: []); // Đảm bảo luôn có chuỗi JSON hợp lệ
+                $selected_products_json = json_encode($selected_products ?: []);
 
-                // Lưu thông tin đặt sân
                 try {
                     $stmt = $pdo->prepare("INSERT INTO bookings (user_id, field_id, booking_date, start_time, end_time, total_price, status, selected_products) 
                                            VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)");
                     $stmt->execute([$_SESSION['user_id'], $field_id, $booking_date, $start_time, $end_time, $total_price, $selected_products_json]);
                     $booking_id = $pdo->lastInsertId();
 
-                    // Gửi thông báo cho chủ sân
                     $stmt = $pdo->prepare("SELECT owner_id FROM fields WHERE id = ?");
                     $stmt->execute([$field_id]);
                     $field = $stmt->fetch(PDO::FETCH_ASSOC);
@@ -235,26 +169,57 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['book_field'])) {
                     }
 
                     $modal_success = "Yêu cầu đặt sân đã được gửi, đang chờ xác nhận!";
-                    error_log("Booking successful: booking_id=$booking_id");
                 } catch (PDOException $e) {
                     $modal_error = "Lỗi khi lưu thông tin đặt sân: " . $e->getMessage();
-                    error_log("Booking failed: " . $e->getMessage());
                 }
             }
         }
     }
 
-    // Lưu thông báo vào session để hiển thị lại nếu modal được mở lại
     $_SESSION['modal_error'] = $modal_error;
     $_SESSION['modal_success'] = $modal_success;
     header("Location: search.php?field_id=$field_id");
     exit;
 }
 
-// Lấy field_id từ query parameter để tự động mở modal
+// Xử lý khởi tạo cuộc trò chuyện
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['start_chat'])) {
+    $token = isset($_POST['csrf_token']) ? $_POST['csrf_token'] : '';
+    if (!verifyCsrfToken($token)) {
+        $modal_error = 'Yêu cầu không hợp lệ. Vui lòng thử lại.';
+        $_SESSION['modal_error'] = $modal_error;
+        header("Location: search.php");
+        exit;
+    } elseif (!isset($_SESSION['user_id'])) {
+        header('Location: login.php');
+        exit;
+    } else {
+        $owner_id = (int)$_POST['owner_id'];
+        $user_id = $_SESSION['user_id'];
+
+        $stmt = $pdo->prepare("SELECT id FROM conversations WHERE user_id = ? AND owner_id = ?");
+        $stmt->execute([$user_id, $owner_id]);
+        $conversation = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if ($conversation) {
+            $conversation_id = $conversation['id'];
+        } else {
+            $stmtceeded = $pdo->prepare("INSERT INTO conversations (user_id, owner_id) VALUES (?, ?)");
+            $stmt->execute([$user_id, $owner_id]);
+            $conversation_id = $pdo->lastInsertId();
+
+            $message = "Bạn có tin nhắn mới từ khách hàng (ID #$user_id).";
+            $stmt = $pdo->prepare("INSERT INTO notifications (user_id, message, type, related_id) VALUES (?, ?, 'new_message_conversation', ?)");
+            $stmt->execute([$owner_id, $message, $conversation_id]);
+        }
+
+        header("Location: chat.php?open_conversation_id=$conversation_id");
+        exit;
+    }
+}
+
 $auto_open_field_id = isset($_GET['field_id']) ? (int)$_GET['field_id'] : null;
 
-// Chỉ bao gồm header.php sau khi xử lý logic
 require_once 'includes/header.php';
 ?>
 
@@ -295,6 +260,9 @@ require_once 'includes/header.php';
         background-color: #218838;
     }
     /* Card sân bóng */
+    .field-card {
+        position: relative; /* Để đặt nút Nhắn tin ở góc */
+    }
     .field-card .carousel {
         height: 200px;
         position: relative;
@@ -304,7 +272,6 @@ require_once 'includes/header.php';
         object-fit: cover;
         border-bottom: 1px solid #e0e4e9;
     }
-    /* Đảm bảo nút chuyển ảnh hiển thị rõ ràng */
     .field-card .carousel-control-prev,
     .field-card .carousel-control-next {
         width: 15%;
@@ -338,13 +305,9 @@ require_once 'includes/header.php';
         color: #ffca28;
         font-weight: 600;
     }
-    .field-card .btn-primary {
-        padding: 8px 20px;
-        font-size: 1rem;
-    }
     /* Modal đặt sân */
     .modal-body {
-        padding: 20px;
+        padding: 25px;
     }
     .modal-title {
         font-size: 1.8rem;
@@ -367,7 +330,6 @@ require_once 'includes/header.php';
     .modal .input-group-text {
         border-radius: 5px 0 0 5px;
     }
-    /* Thông báo trong modal */
     .modal-message {
         margin-bottom: 15px;
     }
@@ -381,7 +343,7 @@ require_once 'includes/header.php';
     .weather-info p {
         font-size: 0.95rem;
     }
-    /* Card sản phẩm trong modal */
+    /* Card sản phẩm */
     .product-card {
         border-radius: 5px;
     }
@@ -403,11 +365,61 @@ require_once 'includes/header.php';
         color: #e74c3c;
         font-size: 0.95rem;
     }
-    /* Số lượng sản phẩm */
     .quantity-input {
         width: 70px;
         display: inline-block;
         margin-left: 10px;
+    }
+    /* Nút đặt sân */
+    .btn-book {
+        background: linear-gradient(to right, #1e3c72, #2a5298);
+        color: #fff;
+        border: none;
+        padding: 10px 20px;
+        font-size: 1rem;
+        border-radius: 8px;
+        transition: all 0.3s ease;
+        box-shadow: 0 4px 12px rgba(46, 61, 73, 0.15);
+        width: 100%;
+        text-align: center;
+        box-sizing: border-box;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: 40px;
+    }
+    .btn-book:hover {
+        background: linear-gradient(to right, #16325c, #204d91);
+        transform: translateY(-1px);
+    }
+    /* Nút nhắn tin */
+    .btn-chat {
+        border: 2px solid #2a5298;
+        color: #2a5298;
+        background-color: #fff;
+        padding: 6px 12px;
+        font-size: 0.9rem;
+        border-radius: 8px;
+        transition: all 0.3s ease;
+        text-align: center;
+        box-sizing: border-box;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: 32px;
+        width: auto;
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        z-index: 10;
+    }
+    .btn-chat:hover {
+        background-color: #2a5298;
+        color: #fff;
+        transform: translateY(-1px);
+    }
+    .btn-book i, .btn-chat i {
+        font-size: 1rem;
     }
     /* Responsive */
     @media (max-width: 768px) {
@@ -434,10 +446,6 @@ require_once 'includes/header.php';
         .field-card .card-text {
             font-size: 0.85rem;
         }
-        .field-card .btn-primary {
-            padding: 6px 15px;
-            font-size: 0.9rem;
-        }
         .modal-body {
             padding: 15px;
         }
@@ -453,12 +461,21 @@ require_once 'includes/header.php';
         .quantity-input {
             width: 60px;
         }
+        .btn-book {
+            padding: 8px 16px;
+            font-size: 0.9rem;
+            height: 36px;
+        }
+        .btn-chat {
+            padding: 5px 10px;
+            font-size: 0.8rem;
+            height: 28px;
+        }
     }
 </style>
 
 <section class="search py-3">
     <div class="container">
-
         <!-- Form tìm kiếm -->
         <form method="GET" class="row g-3 align-items-end search-form">
             <div class="col-md-4 col-sm-6">
@@ -498,18 +515,33 @@ require_once 'includes/header.php';
                 <?php foreach ($fields as $field): ?>
                     <div class="col-md-4 col-sm-6 mb-3">
                         <div class="card field-card">
+                            <!-- Nút Nhắn tin ở góc trên bên phải -->
+                            <form method="POST">
+                                <input type="hidden" name="owner_id" value="<?php echo $field['owner_id']; ?>">
+                                <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($csrf_token); ?>">
+                                <button type="submit" name="start_chat" class="btn btn-chat d-flex align-items-center justify-content-center gap-2">
+                                    <i class="bi bi-chat-dots-fill"></i> Nhắn tin
+                                </button>
+                            </form>
+
                             <!-- Carousel hiển thị nhiều hình ảnh -->
                             <div id="carouselField<?php echo $field['id']; ?>" class="carousel slide" data-bs-ride="carousel">
                                 <div class="carousel-inner">
                                     <?php if (!empty($field_images[$field['id']])): ?>
                                         <?php foreach ($field_images[$field['id']] as $index => $image): ?>
                                             <div class="carousel-item <?php echo $index === 0 ? 'active' : ''; ?>">
-                                                <img src="assets/img/<?php echo htmlspecialchars($image['image']); ?>" class="d-block w-100" alt="<?php echo htmlspecialchars($field['name']); ?>">
+                                                <img src="assets/img/<?php echo htmlspecialchars($image['image']); ?>" 
+                                                     class="d-block w-100" 
+                                                     alt="<?php echo htmlspecialchars($field['name']); ?>"
+                                                     onerror="this.onerror=null; this.src='assets/img/default.jpg';">
                                             </div>
                                         <?php endforeach; ?>
                                     <?php else: ?>
                                         <div class="carousel-item active">
-                                            <img src="assets/img/default.jpg" class="d-block w-100" alt="Ảnh mặc định">
+                                            <img src="assets/img/default.jpg" 
+                                                 class="d-block w-100" 
+                                                 alt="Ảnh mặc định"
+                                                 onerror="this.onerror=null; this.src='assets/img/default.jpg';">
                                         </div>
                                     <?php endif; ?>
                                 </div>
@@ -533,18 +565,18 @@ require_once 'includes/header.php';
                                 <p class="card-text price"><i class="bi bi-currency-dollar"></i> Giá: <?php echo number_format($field['price_per_hour'], 0, ',', '.') . ' VND/giờ'; ?></p>
                                 <p class="card-text rating"><i class="bi bi-star-fill text-warning"></i> Đánh giá: <?php echo $field['avg_rating'] ? round($field['avg_rating'], 1) : 'Chưa có'; ?> sao</p>
                                 <a href="<?php echo isset($_SESSION['user_id']) ? 'search.php?field_id=' . $field['id'] : 'login.php?field_id=' . $field['id']; ?>" 
-                                   class="btn btn-primary w-100 d-flex align-items-center justify-content-center gap-2"
+                                   class="btn btn-book d-flex align-items-center justify-content-center gap-2"
                                    <?php echo isset($_SESSION['user_id']) ? 'data-bs-toggle="modal" data-bs-target="#bookModal' . $field['id'] . '"' : ''; ?>>
-                                    <i class="bi bi-calendar-check"></i> Đặt sân ngay
+                                    <i class="bi bi-calendar-check"></i> Đặt sân
                                 </a>
                             </div>
                         </div>
                     </div>
 
-                    <!-- Modal đặt sân (chỉ hiển thị nếu đã đăng nhập) -->
+                    <!-- Modal đặt sân -->
                     <?php if (isset($_SESSION['user_id'])): ?>
                     <div class="modal fade" id="bookModal<?php echo $field['id']; ?>" tabindex="-1" aria-labelledby="bookModalLabel<?php echo $field['id']; ?>" aria-hidden="true">
-                        <div class="modal-dialog modal-lg">
+                        <div class="modal-dialog modal-xl">
                             <div class="modal-content">
                                 <div class="modal-header">
                                     <h5 class="modal-title" id="bookModalLabel<?php echo $field['id']; ?>">Đặt Sân: <?php echo htmlspecialchars($field['name']); ?></h5>
@@ -565,7 +597,6 @@ require_once 'includes/header.php';
                                     <?php endif; ?>
                                     <form method="POST">
                                         <div class="row">
-                                            <!-- Thông tin đặt sân -->
                                             <div class="col-md-6">
                                                 <div class="mb-3">
                                                     <label for="booking_date_<?php echo $field['id']; ?>" class="form-label">Ngày đặt sân</label>
@@ -578,7 +609,12 @@ require_once 'includes/header.php';
                                                     <label for="start_time_<?php echo $field['id']; ?>" class="form-label">Giờ bắt đầu</label>
                                                     <div class="input-group">
                                                         <span class="input-group-text"><i class="bi bi-clock"></i></span>
-                                                        <input type="time" name="start_time" id="start_time_<?php echo $field['id']; ?>" class="form-control" required>
+                                                        <?php
+                                                        $addressParts = explode(',', $field['address']);
+                                                        $city = trim(end($addressParts));
+                                                        $escapedCity = htmlspecialchars($city, ENT_QUOTES, 'UTF-8');
+                                                        ?>
+                                                        <input type="time" name="start_time" id="start_time_<?php echo $field['id']; ?>" class="form-control" required onchange="fetchWeather(<?php echo $field['id']; ?>, '<?php echo $escapedCity; ?>')">
                                                     </div>
                                                 </div>
                                                 <div class="mb-3">
@@ -589,33 +625,12 @@ require_once 'includes/header.php';
                                                     </div>
                                                 </div>
                                             </div>
-                                            <!-- Thông tin thời tiết -->
                                             <div class="col-md-6 weather-info">
-                                                <?php if ($date): ?>
-                                                    <?php $weather = getWeather(explode(',', $field['address'])[0], $date); ?>
-                                                    <?php if (isset($weather['error'])): ?>
-                                                        <p class="text-muted"><?php echo $weather['error']; ?></p>
-                                                    <?php else: ?>
-                                                        <h6>Thời tiết tại <?php echo htmlspecialchars($field['address']); ?> ngày <?php echo htmlspecialchars($date); ?>:</h6>
-                                                        <p><strong>Tình trạng:</strong> <?php echo htmlspecialchars($weather['description']); ?></p>
-                                                        <p><strong>Nhiệt độ:</strong> <?php echo htmlspecialchars($weather['temperature']); ?>°C</p>
-                                                        <p><strong>Độ ẩm:</strong> <?php echo htmlspecialchars($weather['humidity']); ?>%</p>
-                                                        <p><strong>Tốc độ gió:</strong> <?php echo htmlspecialchars($weather['wind_speed']); ?> m/s</p>
-                                                        <?php if (!empty($weather['suggestions'])): ?>
-                                                            <p><strong>Gợi ý:</strong></p>
-                                                            <ul>
-                                                                <?php foreach ($weather['suggestions'] as $suggestion): ?>
-                                                                    <li><?php echo htmlspecialchars($suggestion); ?></li>
-                                                                <?php endforeach; ?>
-                                                            </ul>
-                                                        <?php endif; ?>
-                                                    <?php endif; ?>
-                                                <?php else: ?>
-                                                    <p class="text-muted">Vui lòng chọn ngày để xem thông tin thời tiết.</p>
-                                                <?php endif; ?>
+                                                <div id="weather_<?php echo $field['id']; ?>">
+                                                    <p class="text-muted">Vui lòng chọn giờ bắt đầu để xem thông tin thời tiết.</p>
+                                                </div>
                                             </div>
                                         </div>
-                                        <!-- Danh sách sản phẩm -->
                                         <?php if (!empty($products[$field['id']])): ?>
                                             <hr>
                                             <h6 class="mb-3">Chọn sản phẩm đi kèm:</h6>
@@ -623,17 +638,20 @@ require_once 'includes/header.php';
                                                 <?php foreach ($products[$field['id']] as $index => $product): ?>
                                                     <div class="col-md-4 mb-3">
                                                         <div class="card product-card">
-                                                            <img src="assets/img/<?php echo htmlspecialchars($product['image'] ?: 'default_product.jpg'); ?>" class="card-img-top" alt="<?php echo htmlspecialchars($product['name']); ?>">
+                                                            <img src="assets/img/<?php echo htmlspecialchars($product['image'] ?: 'default_product.jpg'); ?>" 
+                                                                 class="card-img-top" 
+                                                                 alt="<?php echo htmlspecialchars($product['name']); ?>"
+                                                                 onerror="this.onerror=null; this.src='assets/img/default_product.jpg';">
                                                             <div class="card-body">
                                                                 <h6 class="card-title"><?php echo htmlspecialchars($product['name']); ?></h6>
                                                                 <p class="card-text"><?php echo htmlspecialchars($product['description']); ?></p>
                                                                 <p class="price"><?php echo number_format($product['price'], 0, ',', '.') . ' VND'; ?></p>
                                                                 <div class="form-check">
-                                                                    <input class="form-check-input" type="checkbox" name="selected_products[]" value="<?php echo $product['id']; ?>" id="product_<?php echo $product['id']; ?>">
-                                                                    <label class="form-check-label" for="product_<?php echo $product['id']; ?>">
+                                                                    <input class="form-check-input" type="checkbox" name="selected_products[]" value="<?php echo $product['id']; ?>" id="product_<?php echo $field['id'] . '_' . $index; ?>">
+                                                                    <label class="form-check-label" for="product_<?php echo $field['id'] . '_' . $index; ?>">
                                                                         Chọn sản phẩm
                                                                     </label>
-                                                                    <input type="number" name="quantities[]" min="0" value="0" class="form-control quantity-input" id="quantity_<?php echo $product['id']; ?>">
+                                                                    <input type="number" name="quantities[]" min="0" value="0" class="form-control quantity-input" id="quantity_<?php echo $field['id'] . '_' . $index; ?>">
                                                                 </div>
                                                             </div>
                                                         </div>
@@ -644,7 +662,7 @@ require_once 'includes/header.php';
                                         <input type="hidden" name="field_id" value="<?php echo $field['id']; ?>">
                                         <input type="hidden" name="price_per_hour" value="<?php echo $field['price_per_hour']; ?>">
                                         <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($csrf_token); ?>">
-                                        <button type="submit" name="book_field" class="btn btn-primary w-100 d-flex align-items-center justify-content-center gap-2 mt-3">
+                                        <button type="submit" name="book_field" class="btn btn-book w-100 d-flex align-items-center justify-content-center gap-2 mt-3">
                                             <i class="bi bi-check-circle"></i> Gửi yêu cầu đặt sân
                                         </button>
                                     </form>
@@ -662,7 +680,6 @@ require_once 'includes/header.php';
 <?php if ($auto_open_field_id): ?>
 <script>
     document.addEventListener('DOMContentLoaded', function() {
-        // Tự động mở modal nếu có field_id trong query parameter
         const modal = document.getElementById('bookModal<?php echo $auto_open_field_id; ?>');
         if (modal) {
             const bootstrapModal = new bootstrap.Modal(modal);
@@ -673,5 +690,76 @@ require_once 'includes/header.php';
     });
 </script>
 <?php endif; ?>
+
+<script>
+function fetchWeather(fieldId, address) {
+    const bookingDateElement = document.getElementById('booking_date_' + fieldId);
+    const startTimeElement = document.getElementById('start_time_' + fieldId);
+    const endTimeElement = document.getElementById('end_time_' + fieldId);
+    const weatherDiv = document.getElementById('weather_' + fieldId);
+
+    if (!bookingDateElement || !startTimeElement || !endTimeElement || !weatherDiv) {
+        console.error('One or more elements not found:', {
+            bookingDateElement,
+            startTimeElement,
+            endTimeElement,
+            weatherDiv
+        });
+        return;
+    }
+
+    const bookingDate = bookingDateElement.value;
+    const startTime = startTimeElement.value;
+    const endTime = endTimeElement.value;
+
+    if (!bookingDate || !startTime) {
+        weatherDiv.innerHTML = '<p class="text-muted">Vui lòng chọn ngày và giờ bắt đầu để xem thông tin thời tiết.</p>';
+        return;
+    }
+
+    const dateTime = bookingDate + ' ' + startTime;
+
+    const weatherUrl = 'http://localhost/football_booking/get_weather.php';
+
+    fetch(weatherUrl, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: 'city=' + encodeURIComponent(address) + '&date=' + encodeURIComponent(dateTime)
+    })
+    .then(response => {
+        if (!response.ok) {
+            throw new Error('Network response was not ok: ' + response.statusText);
+        }
+        return response.json();
+    })
+    .then(data => {
+        if (data.error) {
+            weatherDiv.innerHTML = '<p class="text-danger">' + data.error + '</p>';
+        } else {
+            let html = '<h6>Thời tiết tại ' + address + ' ngày ' + bookingDate + ':</h6>';
+            html += '<p><strong>Tình trạng:</strong> ' + (data.description || 'Không có dữ liệu') + '</p>';
+            html += '<p><strong>Nhiệt độ:</strong> ' + (data.temperature ? data.temperature + '°C' : 'Không có dữ liệu') + '</p>';
+            html += '<p><strong>Độ ẩm:</strong> ' + (data.humidity ? data.humidity + '%' : 'Không có dữ liệu') + '</p>';
+            html += '<p><strong>Tốc độ gió:</strong> ' + (data.wind_speed ? data.wind_speed + ' m/s' : 'Không có dữ liệu') + '</p>';
+            html += '<p><strong>Xác suất mưa:</strong> ' + (data.rain_probability ? (data.rain_probability * 100).toFixed(0) + '%' : 'Không có dữ liệu') + '</p>';
+            html += '<p><strong>Độ che phủ mây:</strong> ' + (data.cloudiness ? data.cloudiness + '%' : 'Không có dữ liệu') + '</p>';
+            if (data.suggestions && data.suggestions.length > 0) {
+                html += '<p><strong>Gợi ý:</strong></p><ul>';
+                data.suggestions.forEach(suggestion => {
+                    html += '<li>' + suggestion + '</li>';
+                });
+                html += '</ul>';
+            }
+            weatherDiv.innerHTML = html;
+        }
+    })
+    .catch(error => {
+        console.error('Error fetching weather:', error);
+        weatherDiv.innerHTML = '<p class="text-danger">Không thể lấy dữ liệu thời tiết: ' + error.message + '</p>';
+    });
+}
+</script>
 
 <?php require_once 'includes/footer.php'; ?>

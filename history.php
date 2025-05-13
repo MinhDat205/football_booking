@@ -31,6 +31,16 @@ if ($account_type === 'customer') {
     $stmt->execute([$user_id]);
     $bookings = $stmt->fetchAll(PDO::FETCH_ASSOC);
 }
+
+// Kiểm tra xem khách hàng đã đánh giá sân cho booking cụ thể chưa
+$existing_reviews = [];
+if ($account_type === 'customer') {
+    foreach ($bookings as $booking) {
+        $stmt = $pdo->prepare("SELECT COUNT(*) FROM reviews WHERE user_id = ? AND booking_id = ?");
+        $stmt->execute([$user_id, $booking['id']]);
+        $existing_reviews[$booking['id']] = $stmt->fetchColumn() > 0;
+    }
+}
 ?>
 
 <style>
@@ -58,6 +68,16 @@ if ($account_type === 'customer') {
         font-weight: 600;
         font-size: 1.1rem;
     }
+    .history-table .btn {
+        padding: 6px 12px;
+        font-size: 0.9rem;
+    }
+    .history-table .btn-primary {
+        background-color: #2a5298;
+    }
+    .history-table .btn-primary:hover {
+        background-color: #1e3c72;
+    }
     /* Responsive */
     @media (max-width: 768px) {
         .section-title {
@@ -70,6 +90,10 @@ if ($account_type === 'customer') {
         .history-table td {
             padding: 10px;
             font-size: 0.9rem;
+        }
+        .history-table .btn {
+            padding: 5px 10px;
+            font-size: 0.85rem;
         }
     }
 </style>
@@ -113,7 +137,6 @@ if ($account_type === 'customer') {
                                 <td>
                                     <span class="badge <?php echo $booking['status'] === 'pending' ? 'bg-warning' : ($booking['status'] === 'confirmed' ? 'bg-success' : ($booking['status'] === 'completed' ? 'bg-info' : 'bg-danger')); ?>">
                                         <?php 
-                                        // Thay đổi văn bản hiển thị của trạng thái
                                         switch ($booking['status']) {
                                             case 'pending':
                                                 echo 'Chờ xác nhận';
@@ -132,6 +155,15 @@ if ($account_type === 'customer') {
                                         }
                                         ?>
                                     </span>
+                                </td>
+                                <td>
+                                    <?php if ($account_type === 'customer' && $booking['status'] === 'completed' && !$existing_reviews[$booking['id']]): ?>
+                                        <a href="/football_booking/review.php?field_id=<?php echo $booking['field_id']; ?>&booking_id=<?php echo $booking['id']; ?>" class="btn btn-primary btn-sm d-flex align-items-center gap-1">
+                                            <i class="bi bi-star-fill"></i> Đánh giá
+                                        </a>
+                                    <?php elseif ($account_type === 'customer' && $booking['status'] === 'completed' && $existing_reviews[$booking['id']]): ?>
+                                        <span class="text-muted">Đã đánh giá</span>
+                                    <?php endif; ?>
                                 </td>
                             </tr>
                         <?php endforeach; ?>

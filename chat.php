@@ -11,6 +11,9 @@ $user_id = $_SESSION['user_id'];
 $account_type = $_SESSION['account_type'];
 $csrf_token = generateCsrfToken();
 
+// Lấy tham số open_conversation_id từ URL (nếu có)
+$open_conversation_id = isset($_GET['open_conversation_id']) ? (int)$_GET['open_conversation_id'] : 0;
+
 // Lấy danh sách các cuộc trò chuyện (dựa trên cặp người dùng)
 $conversations = [];
 if ($account_type === 'customer') {
@@ -75,53 +78,59 @@ if ($account_type === 'customer') {
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['send_message'])) {
     $token = isset($_POST['csrf_token']) ? $_POST['csrf_token'] : '';
     $error = '';
+    $success = '';
 
     if (!verifyCsrfToken($token)) {
         $error = 'Yêu cầu không hợp lệ. Vui lòng thử lại.';
     } else {
-        $receiver_id = (int)$_POST['receiver_id'];
+        $receiver_id = isset($_POST['receiver_id']) ? (int)$_POST['receiver_id'] : 0;
         $message = trim($_POST['message']);
+        $conversation_id = isset($_POST['conversation_id']) ? (int)$_POST['conversation_id'] : 0;
 
-        if (empty($message)) {
+        // Kiểm tra các tham số đầu vào
+        if ($conversation_id <= 0) {
+            $error = 'Cuộc trò chuyện không hợp lệ.';
+        } elseif ($receiver_id <= 0) {
+            $error = 'Người nhận không hợp lệ.';
+        } elseif (empty($message)) {
             $error = 'Vui lòng nhập nội dung tin nhắn.';
         } elseif (strlen($message) > 1000) {
             $error = 'Tin nhắn không được vượt quá 1000 ký tự.';
         } else {
-            // Kiểm tra xem cuộc trò chuyện đã tồn tại chưa
-            $stmt = $pdo->prepare("SELECT id FROM conversations WHERE (user_id = ? AND owner_id = ?) OR (user_id = ? AND owner_id = ?)");
-            $stmt->execute([$user_id, $receiver_id, $receiver_id, $user_id]);
-            $conversation = $stmt->fetch(PDO::FETCH_ASSOC);
+            try {
+                // Lưu tin nhắn
+                $stmt = $pdo->prepare("INSERT INTO messages (conversation_id, sender_id, receiver_id, message) VALUES (?, ?, ?, ?)");
+                $stmt->execute([$conversation_id, $user_id, $receiver_id, $message]);
+                $message_id = $pdo->lastInsertId();
 
-            if (!$conversation) {
-                // Tạo cuộc trò chuyện mới nếu chưa tồn tại
-                $stmt = $pdo->prepare("INSERT INTO conversations (user_id, owner_id) VALUES (?, ?)");
-                if ($account_type === 'customer') {
-                    $stmt->execute([$user_id, $receiver_id]);
-                } else {
-                    $stmt->execute([$receiver_id, $user_id]);
-                }
-                $conversation_id = $pdo->lastInsertId();
-            } else {
-                $conversation_id = $conversation['id'];
+                // Gửi thông báo
+                $field_name = $conversations[array_search($conversation_id, array_column($conversations, 'conversation_id'))]['field_name'] ?? 'Không xác định';
+                $notification_message = "Bạn có tin nhắn mới từ " . ($account_type === 'owner' ? "chủ sân" : "khách hàng") . " liên quan đến sân bóng " . $field_name;
+                $stmt = $pdo->prepare("INSERT INTO notifications (user_id, message, type, related_id) VALUES (?, ?, 'new_message_conversation', ?)");
+                $stmt->execute([$receiver_id, $notification_message, $message_id]);
+
+                $success = 'Tin nhắn đã được gửi!';
+                header("Location: chat.php?open_conversation_id=$conversation_id");
+                exit;
+            } catch (PDOException $e) {
+                $error = 'Lỗi khi gửi tin nhắn: ' . $e->getMessage();
             }
-
-            // Lưu tin nhắn
-            $stmt = $pdo->prepare("INSERT INTO messages (conversation_id, sender_id, receiver_id, message) VALUES (?, ?, ?, ?)");
-            $stmt->execute([$conversation_id, $user_id, $receiver_id, $message]);
-            $message_id = $pdo->lastInsertId();
-
-            // Gửi thông báo
-            $field_name = $conversations[array_search($conversation_id, array_column($conversations, 'conversation_id'))]['field_name'] ?? 'Không xác định';
-            $notification_message = "Bạn có tin nhắn mới từ " . ($account_type === 'owner' ? "chủ sân" : "khách hàng") . " liên quan đến sân bóng " . $field_name;
-            $stmt = $pdo->prepare("INSERT INTO notifications (user_id, message, type, related_id) VALUES (?, ?, 'new_message_conversation', ?)");
-            $stmt->execute([$receiver_id, $notification_message, $message_id]);
-
-            $success = 'Tin nhắn đã được gửi!';
-            header('Location: chat.php');
-            exit;
         }
     }
+
+    // Lưu thông báo vào session để hiển thị trong modal
+    $_SESSION['chat_message'] = [
+        'conversation_id' => $conversation_id,
+        'success' => $success,
+        'error' => $error
+    ];
+    header("Location: chat.php?open_conversation_id=$conversation_id");
+    exit;
 }
+
+// Kiểm tra thông báo từ session
+$chat_message = isset($_SESSION['chat_message']) ? $_SESSION['chat_message'] : [];
+unset($_SESSION['chat_message']);
 
 // Chỉ bao gồm header.php sau khi xử lý logic
 require_once 'includes/header.php';
@@ -248,13 +257,6 @@ require_once 'includes/header.php';
 <section class="chat py-3">
     <div class="container">
         <h2 class="section-title text-center">Chat</h2>
-        <?php if (isset($success)): ?>
-            <div class="alert alert-success alert-dismissible fade show mt-3" role="alert">
-                <i class="bi bi-check-circle-fill me-2"></i> <?php echo $success; ?>
-                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
-            </div>
-            <?php unset($success); // Xóa biến $success sau khi hiển thị ?>
-        <?php endif; ?>
         <?php if (empty($conversations)): ?>
             <p class="text-center text-muted">Bạn chưa có cuộc trò chuyện nào.</p>
         <?php else: ?>
@@ -294,6 +296,22 @@ require_once 'includes/header.php';
                                             <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                                         </div>
                                         <div class="modal-body">
+                                            <!-- Hiển thị thông báo trong modal -->
+                                            <?php if (isset($chat_message['conversation_id']) && $chat_message['conversation_id'] == $conversation['conversation_id']): ?>
+                                                <?php if (!empty($chat_message['success'])): ?>
+                                                    <div class="alert alert-success alert-dismissible fade show mt-3 chat-message" role="alert">
+                                                        <i class="bi bi-check-circle-fill me-2"></i> <?php echo $chat_message['success']; ?>
+                                                        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                                                    </div>
+                                                <?php endif; ?>
+                                                <?php if (!empty($chat_message['error'])): ?>
+                                                    <div class="alert alert-danger alert-dismissible fade show mt-3 chat-message" role="alert">
+                                                        <i class="bi bi-exclamation-triangle-fill me-2"></i> <?php echo $chat_message['error']; ?>
+                                                        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                                                    </div>
+                                                <?php endif; ?>
+                                            <?php endif; ?>
+
                                             <!-- Hiển thị tin nhắn -->
                                             <?php
                                             $stmt = $pdo->prepare("SELECT m.*, u.full_name AS sender_name 
@@ -304,7 +322,7 @@ require_once 'includes/header.php';
                                             $stmt->execute([$conversation['conversation_id']]);
                                             $messages = $stmt->fetchAll(PDO::FETCH_ASSOC);
                                             ?>
-                                            <div class="chat-box">
+                                            <div class="chat-box" id="chatBox<?php echo $conversation['conversation_id']; ?>">
                                                 <?php if (empty($messages)): ?>
                                                     <p class="text-muted">Chưa có tin nhắn nào.</p>
                                                 <?php else: ?>
@@ -322,6 +340,7 @@ require_once 'includes/header.php';
                                                 <div class="mb-3">
                                                     <textarea name="message" class="form-control" rows="2" placeholder="Nhập tin nhắn..." maxlength="1000" required></textarea>
                                                 </div>
+                                                <input type="hidden" name="conversation_id" value="<?php echo $conversation['conversation_id']; ?>">
                                                 <input type="hidden" name="receiver_id" value="<?php echo $conversation['receiver_id']; ?>">
                                                 <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($csrf_token); ?>">
                                                 <button type="submit" name="send_message" class="btn btn-primary w-100 d-flex align-items-center justify-content-center gap-2">
@@ -339,5 +358,40 @@ require_once 'includes/header.php';
         <?php endif; ?>
     </div>
 </section>
+
+<script>
+    // Tự động mở modal nếu có open_conversation_id trong URL
+    document.addEventListener('DOMContentLoaded', function() {
+        <?php if ($open_conversation_id > 0): ?>
+            const modal = document.getElementById('chatModal<?php echo $open_conversation_id; ?>');
+            if (modal) {
+                const bootstrapModal = new bootstrap.Modal(modal);
+                bootstrapModal.show();
+            } else {
+                console.error('Modal not found for conversation_id: <?php echo $open_conversation_id; ?>');
+            }
+        <?php endif; ?>
+
+        // Tự động cuộn xuống tin nhắn mới nhất trong mỗi modal khi được mở
+        const modals = document.querySelectorAll('.modal');
+        modals.forEach(modal => {
+            modal.addEventListener('shown.bs.modal', function () {
+                const chatBox = this.querySelector('.chat-box');
+                if (chatBox) {
+                    chatBox.scrollTop = chatBox.scrollHeight;
+                }
+            });
+        });
+
+        // Tự động ẩn thông báo trong modal sau 3 giây
+        const chatMessages = document.querySelectorAll('.chat-message');
+        chatMessages.forEach(message => {
+            setTimeout(() => {
+                message.classList.remove('show');
+                message.classList.add('fade');
+            }, 3000);
+        });
+    });
+</script>
 
 <?php require_once 'includes/footer.php'; ?>

@@ -162,6 +162,29 @@ CREATE TABLE revenues (
     FOREIGN KEY (field_id) REFERENCES fields(id) ON DELETE CASCADE
 );
 
+CREATE TABLE orders (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    customer_id INT NOT NULL,
+    owner_id INT NOT NULL,
+    delivery_address VARCHAR(255) NOT NULL,
+    total_price DECIMAL(10, 2) NOT NULL,
+    status ENUM('pending', 'confirmed', 'rejected', 'completed', 'received') DEFAULT 'pending',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (customer_id) REFERENCES users(id),
+    FOREIGN KEY (owner_id) REFERENCES users(id)
+);
+
+CREATE TABLE order_items (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    order_id INT NOT NULL,
+    product_id INT NOT NULL,
+    quantity INT NOT NULL,
+    price DECIMAL(10, 2) NOT NULL,
+    FOREIGN KEY (order_id) REFERENCES orders(id),
+    FOREIGN KEY (product_id) REFERENCES products(id)
+);
+
 -- Thêm các chỉ mục để tối ưu hiệu suất
 CREATE INDEX idx_user_id ON bookings(user_id);
 CREATE INDEX idx_field_id ON bookings(field_id);
@@ -652,3 +675,46 @@ VALUES
 (4, 43, 3, 400000 + (15000 * 1), '2025-05-06 10:30:00'), -- total_price + nước ngọt (15,000 x 1)
 -- Booking 48 (field 8, owner 9)
 (9, 48, 8, 360000 + (60000 * 1), '2025-05-06 10:55:00'); -- total_price + bóng đá (60,000 x 1)
+
+INSERT INTO orders (customer_id, owner_id, delivery_address, total_price, status, created_at)
+VALUES 
+(12, 2, '123 Đường Láng, Hà Nội', 60000, 'pending', '2025-05-13 11:00:00'), -- Khách hàng 1 đặt hàng của chủ sân 2
+(12, 3, '123 Đường Láng, Hà Nội', 160000, 'confirmed', '2025-05-13 11:05:00'), -- Khách hàng 1 đặt hàng của chủ sân 3
+(13, 2, '456 Nguyễn Huệ, Hà Nội', 20000, 'rejected', '2025-05-13 11:10:00'), -- Khách hàng 2 đặt hàng của chủ sân 2
+(14, 4, '789 Lê Lợi, TP.HCM', 55000, 'completed', '2025-05-13 11:15:00'), -- Khách hàng 3 đặt hàng của chủ sân 4
+(15, 5, '101 Trần Phú, TP.HCM', 30000, 'received', '2025-05-13 11:20:00'); -- Khách hàng 4 đặt hàng của chủ sân 5
+
+INSERT INTO order_items (order_id, product_id, quantity, price)
+VALUES 
+-- Đơn hàng 1 (pending): Khách hàng 1 đặt 1 bóng đá (ID 2) từ chủ sân 2
+(1, 2, 1, 50000),
+(1, 1, 1, 10000),
+-- Đơn hàng 2 (confirmed): Khách hàng 1 đặt 1 áo thi đấu (ID 4) và 1 nước suối (ID 3) từ chủ sân 3
+(2, 4, 1, 150000),
+(2, 3, 1, 10000),
+-- Đơn hàng 3 (rejected): Khách hàng 2 đặt 2 nước suối (ID 1) từ chủ sân 2
+(3, 1, 2, 10000),
+-- Đơn hàng 4 (completed): Khách hàng 3 đặt 1 bóng đá (ID 7) và 1 nước suối (ID 6) từ chủ sân 4
+(4, 7, 1, 50000),
+(4, 6, 1, 5000),
+-- Đơn hàng 5 (received): Khách hàng 4 đặt 2 nước ngọt (ID 9) từ chủ sân 5
+(5, 9, 2, 15000);
+
+INSERT INTO notifications (user_id, message, type, related_id, created_at)
+VALUES 
+-- Thông báo cho chủ sân 2 về đơn hàng 1 (pending)
+(2, 'Bạn có đơn đặt sản phẩm mới (ID #1) từ khách hàng.', 'new_order', 1, '2025-05-13 11:00:00'),
+-- Thông báo cho chủ sân 3 về đơn hàng 2 (confirmed)
+(3, 'Bạn có đơn đặt sản phẩm mới (ID #2) từ khách hàng.', 'new_order', 2, '2025-05-13 11:05:00'),
+(12, 'Đơn hàng của bạn (ID #2) đã được xác nhận.', 'order_confirmed', 2, '2025-05-13 11:06:00'),
+-- Thông báo cho chủ sân 2 về đơn hàng 3 (rejected)
+(2, 'Bạn có đơn đặt sản phẩm mới (ID #3) từ khách hàng.', 'new_order', 3, '2025-05-13 11:10:00'),
+(13, 'Đơn hàng của bạn (ID #3) đã bị từ chối.', 'order_rejected', 3, '2025-05-13 11:11:00'),
+-- Thông báo cho chủ sân 4 về đơn hàng 4 (completed)
+(4, 'Bạn có đơn đặt sản phẩm mới (ID #4) từ khách hàng.', 'new_order', 4, '2025-05-13 11:15:00'),
+(14, 'Đơn hàng của bạn (ID #4) đã được xác nhận.', 'order_confirmed', 4, '2025-05-13 11:16:00'),
+(14, 'Đơn hàng của bạn (ID #4) đã hoàn thành. Vui lòng xác nhận nhận hàng.', 'order_completed', 4, '2025-05-13 11:17:00'),
+-- Thông báo cho chủ sân 5 về đơn hàng 5 (received)
+(5, 'Bạn có đơn đặt sản phẩm mới (ID #5) từ khách hàng.', 'new_order', 5, '2025-05-13 11:20:00'),
+(15, 'Đơn hàng của bạn (ID #5) đã được xác nhận.', 'order_confirmed', 5, '2025-05-13 11:21:00'),
+(15, 'Đơn hàng của bạn (ID #5) đã hoàn thành. Vui lòng xác nhận nhận hàng.', 'order_completed', 5, '2025-05-13 11:22:00');
