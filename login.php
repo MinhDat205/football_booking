@@ -41,24 +41,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmt->execute([$email]);
             $user = $stmt->fetch(PDO::FETCH_ASSOC);
 
-            if ($user && password_verify($password, $user['password'])) {
-                $_SESSION['user_id'] = $user['id'];
-                $_SESSION['account_type'] = $user['account_type'];
+            if ($user) {
+                if (isset($user['status']) && $user['status'] === 'deleted') {
+                    $error = 'Tài khoản này đã bị xóa khỏi hệ thống.';
+                } elseif (isset($user['status']) && $user['status'] === 'rejected') {
+                    $error = 'Tài khoản của bạn đã bị khóa. Vui lòng liên hệ quản trị viên để biết thêm chi tiết.';
+                } elseif (password_verify($password, $user['password'])) {
+                    $_SESSION['user_id'] = $user['id'];
+                    $_SESSION['account_type'] = $user['account_type'];
 
-                // Chuyển hướng dựa trên loại tài khoản
-                $redirect_url = '';
-                if ($user['account_type'] === 'owner') {
-                    $redirect_url = 'history.php';
-                } elseif ($user['account_type'] === 'admin') {
-                    $redirect_url = 'admin_users.php';
-                } else {
-                    $redirect_url = 'search.php';
-                    if ($field_id) {
-                        $redirect_url .= '?field_id=' . $field_id;
+                    // Chuyển hướng dựa trên loại tài khoản
+                    $redirect_url = '';
+                    if ($user['account_type'] === 'owner') {
+                        $redirect_url = 'history.php';
+                    } elseif ($user['account_type'] === 'admin') {
+                        $redirect_url = 'admin_users.php';
+                    } else {
+                        $redirect_url = 'search.php';
+                        if ($field_id) {
+                            $redirect_url .= '?field_id=' . $field_id;
+                        }
                     }
+                    header('Location: ' . $redirect_url);
+                    exit;
+                } else {
+                    $error = 'Email hoặc mật khẩu không đúng.';
                 }
-                header('Location: ' . $redirect_url);
-                exit;
             } else {
                 $error = 'Email hoặc mật khẩu không đúng.';
             }
@@ -117,6 +125,19 @@ require_once 'includes/header.php';
     .register-link a:hover {
         text-decoration: underline;
     }
+    .forgot-password-link {
+        text-align: right;
+        margin-bottom: 1rem;
+    }
+    .forgot-password-link a {
+        color: #6c757d;
+        text-decoration: none;
+        font-size: 0.9rem;
+    }
+    .forgot-password-link a:hover {
+        color: #2a5298;
+        text-decoration: underline;
+    }
     @media (max-width: 768px) {
         .login-section {
             padding: 15px;
@@ -158,6 +179,9 @@ require_once 'includes/header.php';
                         <span class="input-group-text"><i class="bi bi-lock-fill"></i></span>
                         <input type="password" name="password" id="password" class="form-control" required>
                     </div>
+                </div>
+                <div class="forgot-password-link">
+                    <a href="forgot_password.php">Quên mật khẩu?</a>
                 </div>
                 <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($csrf_token); ?>">
                 <button type="submit" class="btn btn-primary d-flex align-items-center justify-content-center gap-2">

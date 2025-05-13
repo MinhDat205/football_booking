@@ -36,8 +36,8 @@ if ($account_type === 'customer') {
 $existing_reviews = [];
 if ($account_type === 'customer') {
     foreach ($bookings as $booking) {
-        $stmt = $pdo->prepare("SELECT COUNT(*) FROM reviews WHERE user_id = ? AND booking_id = ?");
-        $stmt->execute([$user_id, $booking['id']]);
+        $stmt = $pdo->prepare("SELECT COUNT(*) FROM reviews WHERE user_id = ? AND field_id = ?");
+        $stmt->execute([$user_id, $booking['field_id']]);
         $existing_reviews[$booking['id']] = $stmt->fetchColumn() > 0;
     }
 }
@@ -158,7 +158,7 @@ if ($account_type === 'customer') {
                                 </td>
                                 <td>
                                     <?php if ($account_type === 'customer' && $booking['status'] === 'completed' && !$existing_reviews[$booking['id']]): ?>
-                                        <a href="/football_booking/review.php?field_id=<?php echo $booking['field_id']; ?>&booking_id=<?php echo $booking['id']; ?>" class="btn btn-primary btn-sm d-flex align-items-center gap-1">
+                                        <a href="/football_booking/review.php?field_id=<?php echo $booking['field_id']; ?>" class="btn btn-primary btn-sm d-flex align-items-center gap-1">
                                             <i class="bi bi-star-fill"></i> Đánh giá
                                         </a>
                                     <?php elseif ($account_type === 'customer' && $booking['status'] === 'completed' && $existing_reviews[$booking['id']]): ?>

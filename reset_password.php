@@ -5,49 +5,48 @@ require_once 'includes/csrf.php';
 
 $error = '';
 $success = '';
-$token = isset($_GET['token']) ? trim($_GET['token']) : '';
 $csrf_token = generateCsrfToken();
 
-if (empty($token)) {
-    $error = 'Liên kết không hợp lệ.';
-} else {
-    // Kiểm tra token
-    $stmt = $pdo->prepare("SELECT * FROM password_resets WHERE token = ?");
-    $stmt->execute([$token]);
-    $reset = $stmt->fetch(PDO::FETCH_ASSOC);
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $csrf_token_post = isset($_POST['csrf_token']) ? $_POST['csrf_token'] : '';
 
-    if (!$reset) {
-        $error = 'Token không hợp lệ hoặc đã hết hạn.';
+    if (!verifyCsrfToken($csrf_token_post)) {
+        $error = 'Yêu cầu không hợp lệ. Vui lòng thử lại.';
     } else {
-        // Kiểm tra thời gian token (hết hạn sau 1 giờ)
-        $created_at = strtotime($reset['created_at']);
-        $current_time = strtotime('now');
-        if (($current_time - $created_at) > 3600) {
-            $error = 'Token đã hết hạn.';
-        } elseif ($_SERVER['REQUEST_METHOD'] === 'POST') {
-            $csrf_token_post = isset($_POST['csrf_token']) ? $_POST['csrf_token'] : '';
+        $email = trim($_POST['email']);
+        $verification_code = trim($_POST['verification_code']);
+        $password = trim($_POST['password']);
+        $confirm_password = trim($_POST['confirm_password']);
 
-            if (!verifyCsrfToken($csrf_token_post)) {
-                $error = 'Yêu cầu không hợp lệ. Vui lòng thử lại.';
+        if (empty($email) || empty($verification_code) || empty($password) || empty($confirm_password)) {
+            $error = 'Vui lòng điền đầy đủ thông tin.';
+        } elseif ($password !== $confirm_password) {
+            $error = 'Mật khẩu xác nhận không khớp.';
+        } elseif (strlen($password) < 6) {
+            $error = 'Mật khẩu phải có ít nhất 6 ký tự.';
+        } else {
+            // Kiểm tra mã xác nhận và email
+            $stmt = $pdo->prepare("SELECT * FROM password_resets WHERE email = ? AND token = ?");
+            $stmt->execute([$email, $verification_code]);
+            $reset = $stmt->fetch(PDO::FETCH_ASSOC);
+
+            if (!$reset) {
+                $error = 'Mã xác nhận không đúng hoặc đã hết hạn.';
             } else {
-                $password = trim($_POST['password']);
-                $confirm_password = trim($_POST['confirm_password']);
-
-                if (empty($password) || empty($confirm_password)) {
-                    $error = 'Vui lòng điền đầy đủ mật khẩu.';
-                } elseif ($password !== $confirm_password) {
-                    $error = 'Mật khẩu xác nhận không khớp.';
-                } elseif (strlen($password) < 6) {
-                    $error = 'Mật khẩu phải có ít nhất 6 ký tự.';
+                // Kiểm tra thời gian token (hết hạn sau 1 giờ)
+                $created_at = strtotime($reset['created_at']);
+                $current_time = strtotime('now');
+                if (($current_time - $created_at) > 3600) {
+                    $error = 'Mã xác nhận đã hết hạn.';
                 } else {
                     // Cập nhật mật khẩu mới
                     $hashed_password = password_hash($password, PASSWORD_DEFAULT);
                     $stmt = $pdo->prepare("UPDATE users SET password = ? WHERE email = ?");
-                    $stmt->execute([$hashed_password, $reset['email']]);
+                    $stmt->execute([$hashed_password, $email]);
 
                     // Xóa token đã sử dụng
-                    $stmt = $pdo->prepare("DELETE FROM password_resets WHERE token = ?");
-                    $stmt->execute([$token]);
+                    $stmt = $pdo->prepare("DELETE FROM password_resets WHERE email = ? AND token = ?");
+                    $stmt->execute([$email, $verification_code]);
 
                     $success = 'Mật khẩu đã được đặt lại thành công! Bạn có thể <a href="login.php">đăng nhập</a> ngay bây giờ.';
                 }
@@ -68,6 +67,14 @@ if (empty($token)) {
         <?php else: ?>
             <form method="POST" class="row justify-content-center">
                 <div class="col-md-6">
+                    <div class="mb-3">
+                        <label for="email" class="form-label">Email</label>
+                        <input type="email" name="email" id="email" class="form-control" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="verification_code" class="form-label">Mã xác nhận</label>
+                        <input type="text" name="verification_code" id="verification_code" class="form-control" required>
+                    </div>
                     <div class="mb-3">
                         <label for="password" class="form-label">Mật khẩu mới</label>
                         <input type="password" name="password" id="password" class="form-control" required>

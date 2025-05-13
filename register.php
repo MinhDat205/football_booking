@@ -11,6 +11,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $password = $_POST['password'];
     $account_type = $_POST['account_type'];
 
+    // Thông tin sân cho chủ sân
+    $field_name = isset($_POST['field_name']) ? trim($_POST['field_name']) : '';
+    $field_address = isset($_POST['field_address']) ? trim($_POST['field_address']) : '';
+    $field_price = isset($_POST['field_price']) ? (float)$_POST['field_price'] : 0;
+    $field_open = isset($_POST['field_open']) ? $_POST['field_open'] : '';
+    $field_close = isset($_POST['field_close']) ? $_POST['field_close'] : '';
+    $field_type = isset($_POST['field_type']) ? $_POST['field_type'] : '';
+
     if (empty($full_name) || empty($email) || empty($password) || empty($account_type)) {
         $error = 'Vui lòng điền đầy đủ thông tin.';
     } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
@@ -19,6 +27,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $error = 'Mật khẩu phải có ít nhất 6 ký tự.';
     } elseif (!in_array($account_type, ['customer', 'owner'])) {
         $error = 'Loại tài khoản không hợp lệ.';
+    } elseif ($account_type === 'owner' && (empty($field_name) || empty($field_address) || $field_price <= 0 || empty($field_open) || empty($field_close) || empty($field_type))) {
+        $error = 'Vui lòng nhập đầy đủ thông tin sân cho chủ sân.';
     } else {
         $stmt = $pdo->prepare("SELECT * FROM users WHERE email = ?");
         $stmt->execute([$email]);
@@ -29,9 +39,44 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $status = $account_type === 'owner' ? 'pending' : 'approved';
             $stmt = $pdo->prepare("INSERT INTO users (full_name, email, password, account_type, status) VALUES (?, ?, ?, ?, ?)");
             $stmt->execute([$full_name, $email, $hashed_password, $account_type, $status]);
-            $success = 'Đăng ký thành công! Vui lòng đăng nhập.';
-            header('Location: login.php');
-            exit;
+            $user_id = $pdo->lastInsertId();
+            // Nếu là chủ sân, tạo luôn sân và ảnh
+            if ($account_type === 'owner') {
+                $stmt = $pdo->prepare("INSERT INTO fields (owner_id, name, address, price_per_hour, open_time, close_time, field_type, status) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')");
+                $stmt->execute([$user_id, $field_name, $field_address, $field_price, $field_open, $field_close, $field_type]);
+                $field_id = $pdo->lastInsertId();
+                // Xử lý upload ảnh
+                if (isset($_FILES['field_images']) && !empty($_FILES['field_images']['name'][0])) {
+                    $allowed_types = ['image/jpeg', 'image/png', 'image/gif'];
+                    $max_size = 5 * 1024 * 1024; // 5MB
+                    foreach ($_FILES['field_images']['name'] as $key => $image_name) {
+                        if ($_FILES['field_images']['error'][$key] === UPLOAD_ERR_OK) {
+                            if (!in_array($_FILES['field_images']['type'][$key], $allowed_types)) {
+                                $error = 'Chỉ hỗ trợ định dạng ảnh JPEG, PNG, GIF.';
+                                break;
+                            } elseif ($_FILES['field_images']['size'][$key] > $max_size) {
+                                $error = 'Kích thước ảnh không được vượt quá 5MB.';
+                                break;
+                            } else {
+                                $image_name = 'field_' . $field_id . '_' . time() . '_' . $key . '.' . pathinfo($_FILES['field_images']['name'][$key], PATHINFO_EXTENSION);
+                                $upload_path = 'assets/img/' . $image_name;
+                                if (move_uploaded_file($_FILES['field_images']['tmp_name'][$key], $upload_path)) {
+                                    $stmt = $pdo->prepare("INSERT INTO field_images (field_id, image) VALUES (?, ?)");
+                                    $stmt->execute([$field_id, $image_name]);
+                                } else {
+                                    $error = 'Không thể tải ảnh lên. Vui lòng thử lại.';
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if (!$error) {
+                $success = 'Đăng ký thành công! Vui lòng đăng nhập.';
+                header('Location: login.php');
+                exit;
+            }
         }
     }
 }
@@ -153,7 +198,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
                     </div>
                 <?php endif; ?>
-                <form method="POST">
+                <form method="POST" enctype="multipart/form-data">
                     <div class="mb-3">
                         <label for="full_name" class="form-label">Họ tên</label>
                         <div class="input-group">
@@ -179,11 +224,48 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         <label for="account_type" class="form-label">Loại tài khoản</label>
                         <div class="input-group">
                             <span class="input-group-text"><i class="bi bi-person-lines-fill"></i></span>
-                            <select name="account_type" id="account_type" class="form-select" required>
+                            <select name="account_type" id="account_type" class="form-select" required onchange="toggleFieldInfo()">
                                 <option value="">Chọn loại tài khoản</option>
                                 <option value="customer">Khách hàng</option>
                                 <option value="owner">Chủ sân</option>
                             </select>
+                        </div>
+                    </div>
+                    <!-- Thông tin sân cho chủ sân -->
+                    <div id="field-info" style="display:none;">
+                        <div class="mb-3">
+                            <label for="field_name" class="form-label">Tên sân</label>
+                            <input type="text" name="field_name" id="field_name" class="form-control">
+                        </div>
+                        <div class="mb-3">
+                            <label for="field_address" class="form-label">Địa chỉ sân</label>
+                            <input type="text" name="field_address" id="field_address" class="form-control">
+                        </div>
+                        <div class="mb-3">
+                            <label for="field_price" class="form-label">Giá mỗi giờ (VND)</label>
+                            <input type="number" name="field_price" id="field_price" class="form-control">
+                        </div>
+                        <div class="mb-3">
+                            <label for="field_open" class="form-label">Giờ mở cửa</label>
+                            <input type="time" name="field_open" id="field_open" class="form-control">
+                        </div>
+                        <div class="mb-3">
+                            <label for="field_close" class="form-label">Giờ đóng cửa</label>
+                            <input type="time" name="field_close" id="field_close" class="form-control">
+                        </div>
+                        <div class="mb-3">
+                            <label for="field_type" class="form-label">Loại sân</label>
+                            <select name="field_type" id="field_type" class="form-select">
+                                <option value="">Chọn loại sân</option>
+                                <option value="5">Sân 5 người</option>
+                                <option value="7">Sân 7 người</option>
+                                <option value="9">Sân 9 người</option>
+                                <option value="11">Sân 11 người</option>
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label for="field_images" class="form-label">Ảnh sân (JPEG, PNG, GIF, tối đa 5MB/ảnh, có thể chọn nhiều ảnh)</label>
+                            <input type="file" name="field_images[]" id="field_images" class="form-control" multiple accept="image/*">
                         </div>
                     </div>
                     <button type="submit" class="btn btn-primary w-100 d-flex align-items-center justify-content-center gap-2">
@@ -196,6 +278,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             </div>
         </div>
     </div>
+    <script>
+    function toggleFieldInfo() {
+        var type = document.getElementById('account_type').value;
+        document.getElementById('field-info').style.display = (type === 'owner') ? 'block' : 'none';
+    }
+    </script>
 </body>
 </html>
 <?php require_once 'includes/footer.php'; ?>

@@ -15,6 +15,7 @@ $fields = $pdo->prepare("
     SELECT f.*, u.full_name AS owner_name 
     FROM fields f 
     JOIN users u ON f.owner_id = u.id 
+    WHERE f.status IN ('approved', 'pending') 
     ORDER BY 
         CASE 
             WHEN f.status = 'pending' THEN 1 
@@ -44,6 +45,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmt = $pdo->prepare("UPDATE fields SET status = ? WHERE id = ?");
             $stmt->execute([$new_status, $field_id]);
             $success = "Cập nhật trạng thái sân bóng thành công!";
+            header('Location: admin_fields.php');
+            exit;
+        }
+        // Xử lý xóa sân
+        if (isset($_POST['delete_field'])) {
+            $field_id = (int)$_POST['field_id'];
+            $stmt = $pdo->prepare("UPDATE fields SET status = 'deleted' WHERE id = ?");
+            $stmt->execute([$field_id]);
+            $_SESSION['success'] = "Đã ẩn sân khỏi hệ thống (xóa mềm).";
             header('Location: admin_fields.php');
             exit;
         }
@@ -167,12 +177,20 @@ require_once 'includes/header.php';
     <div class="container">
         <h2 class="section-title">Quản Lý Sân Bóng</h2>
 
-        <?php if (isset($success)): ?>
+        <?php if (!empty($success)): ?>
             <div class="alert alert-success alert-dismissible fade show mt-3" role="alert">
                 <i class="bi bi-check-circle-fill me-2"></i> <?php echo $success; ?>
                 <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
             </div>
             <?php unset($success); ?>
+        <?php endif; ?>
+
+        <?php if (!empty($error)): ?>
+            <div class="alert alert-danger alert-dismissible fade show mt-3" role="alert">
+                <i class="bi bi-exclamation-triangle-fill me-2"></i> <?php echo $error; ?>
+                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+            </div>
+            <?php unset($error); ?>
         <?php endif; ?>
 
         <?php if (empty($fields_list)): ?>
@@ -228,6 +246,13 @@ require_once 'includes/header.php';
                                             </button>
                                         </form>
                                     <?php endif; ?>
+                                    <form method="POST" style="display:inline;" onsubmit="return confirm('Bạn có chắc chắn muốn xóa sân này? Hành động này không thể hoàn tác!');">
+                                        <input type="hidden" name="field_id" value="<?php echo $field['id']; ?>">
+                                        <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($csrf_token); ?>">
+                                        <button type="submit" name="delete_field" class="btn btn-danger btn-sm d-flex align-items-center gap-1 mt-1 action-btn">
+                                            <i class="bi bi-trash"></i> Xóa
+                                        </button>
+                                    </form>
                                 </td>
                             </tr>
 

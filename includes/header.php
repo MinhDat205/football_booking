@@ -69,7 +69,8 @@ if (isset($_SESSION['account_type']) && $_SESSION['account_type'] === 'owner') {
         'manage_products.php',
         'revenue.php',
         'profile.php',
-        'logout.php'
+        'logout.php',
+        'support.php'
     ];
     if (!in_array($current_page, $owner_pages)) {
         header('Location: /football_booking/manage_bookings.php');
@@ -460,6 +461,12 @@ if (isset($_SESSION['account_type']) && $_SESSION['account_type'] === 'owner') {
                             <?php endif; ?>
                         </ul>
                     </div>
+                    <?php if (isset(
+                        $_SESSION['user_id']) && 
+                        (isset($_SESSION['account_type']) && 
+                        ($_SESSION['account_type'] === 'customer' || $_SESSION['account_type'] === 'owner'))): ?>
+                        <a href="/football_booking/support.php" class="btn btn-outline-light">Support</a>
+                    <?php endif; ?>
                     <a href="/football_booking/profile.php" class="btn btn-outline-light">Hồ sơ</a>
                 <?php else: ?>
                     <a href="/football_booking/login.php" class="btn btn-outline-light">Đăng nhập</a>
